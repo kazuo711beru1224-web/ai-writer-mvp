@@ -525,6 +525,20 @@ def _render_sidebar() -> str:
             type="password",
             help="AIで下書きを作成するときだけ入力します。",
         )
+        st.caption(
+            "APIキーは、AI下書きを使うための大事な鍵です。\n"
+            "人に見せたり、LINEやメールで送ったりしないでください。"
+        )
+        with st.expander("APIキーを安全に使うために"):
+            st.markdown(
+                "- APIキーは作成した直後しか表示されません。\n"
+                "- 作ったら、すぐに安全な場所へ保存してください。\n"
+                "- おすすめは、iPhoneのパスワード管理機能、iCloudキーチェーン、1Password、Bitwarden、ロック付きメモなどです。\n"
+                "- LINE、メール、SNS、スクリーンショット、GitHub、共有メモには保存しないでください。\n"
+                "- スマホでOpenAIの画面を開くときは、SafariまたはChromeを使ってください。\n"
+                "- LINE、Gmail、Googleアプリ、ChatGPTアプリ内のブラウザでは、ログインが止まる場合があります。\n"
+                "- もしAPIキーを人に見せた、外に出した、貼ってしまった可能性がある場合は、そのキーを削除して新しく作り直してください。"
+            )
 
         api_key = str(st.session_state.get("openai_api_key") or "").strip()
         use_real_api = bool(api_key)
