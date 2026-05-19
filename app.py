@@ -198,6 +198,93 @@ STATE_EXCLUDE_PREFIXES = (
 )
 
 
+def _inject_global_style() -> None:
+    css = """
+    <style>
+    :root {
+      color-scheme: dark light;
+    }
+
+    .stTextInput>div>div>input,
+    .stTextArea>div>div>textarea,
+    .stSelectbox>div>div>div>div,
+    .stMultiSelect>div>div>div>div,
+    .stNumberInput>div>div>input,
+    .stRadio>div>label,
+    .stCheckbox>label {
+      border: 1.9px solid rgba(140, 140, 140, 0.9) !important;
+      border-radius: 12px !important;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
+      background-color: rgba(255,255,255,0.04) !important;
+      padding: 0.4rem 0.65rem !important;
+    }
+
+    button[data-baseweb="base-button"],
+    .stButton>button {
+      border: 1.8px solid #2563eb !important;
+      background-color: #2563eb !important;
+      color: #f8fafc !important;
+      font-weight: 600 !important;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+      min-height: 2.9rem;
+    }
+
+    button[data-baseweb="base-button"]:hover,
+    .stButton>button:hover {
+      background-color: #1d4ed8 !important;
+      border-color: #1d4ed8 !important;
+    }
+
+    .stExpander {
+      border: 1.4px solid rgba(140, 140, 140, 0.8) !important;
+      border-radius: 12px !important;
+      background-color: rgba(255,255,255,0.03) !important;
+      padding: 0.4rem 0.55rem !important;
+    }
+
+    .streamlit-expanderHeader {
+      font-weight: 700 !important;
+    }
+
+    .stCaption {
+      background-color: rgba(100, 116, 139, 0.15) !important;
+      border: 1px solid rgba(148, 163, 184, 0.35) !important;
+      border-radius: 10px !important;
+      padding: 0.8rem 1rem !important;
+      margin: 0.45rem 0 0.9rem 0 !important;
+      color: #e5e7eb !important;
+      display: block;
+    }
+
+    .stAlert[data-testid="stWarning"] > div,
+    .stWarning > div > div {
+      border: 1.6px solid #f59e0b !important;
+      background-color: rgba(251, 191, 36, 0.16) !important;
+      color: #f8e3a0 !important;
+    }
+
+    .stAlert[data-testid="stError"] > div,
+    .stError > div > div {
+      border: 1.6px solid #dc2626 !important;
+      background-color: rgba(220, 38, 38, 0.16) !important;
+      color: #fee2e2 !important;
+    }
+
+    .stAlert[data-testid="stSuccess"] > div,
+    .stSuccess > div > div {
+      border: 1.6px solid #16a34a !important;
+      background-color: rgba(22, 163, 74, 0.15) !important;
+      color: #d1fae5 !important;
+    }
+
+    .css-1kyxreq, .css-1d391kg {
+      color: #e5e7eb !important;
+    }
+    </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
+
+
 def _should_save_state_key(key: str, value: Any) -> bool:
     if key in STATE_EXCLUDE_KEYS:
         return False
@@ -525,10 +612,8 @@ def _render_sidebar() -> str:
             type="password",
             help="AIで下書きを作成するときだけ入力します。",
         )
-        st.caption(
-            "APIキーは、AI下書きを使うための大事な鍵です。\n"
-            "人に見せたり、LINEやメールで送ったりしないでください。"
-        )
+        st.write("APIキーは、AI下書きを使うための大事な鍵です。")
+        st.warning("人に見せたり、LINEやメールで送ったりしないでください。")
         with st.expander("APIキーを安全に使うために"):
             st.markdown(
                 "- APIキーは作成した直後しか表示されません。\n"
@@ -536,8 +621,10 @@ def _render_sidebar() -> str:
                 "- おすすめは、iPhoneのパスワード管理機能、iCloudキーチェーン、1Password、Bitwarden、ロック付きメモなどです。\n"
                 "- LINE、メール、SNS、スクリーンショット、GitHub、共有メモには保存しないでください。\n"
                 "- スマホでOpenAIの画面を開くときは、SafariまたはChromeを使ってください。\n"
-                "- LINE、Gmail、Googleアプリ、ChatGPTアプリ内のブラウザでは、ログインが止まる場合があります。\n"
-                "- もしAPIキーを人に見せた、外に出した、貼ってしまった可能性がある場合は、そのキーを削除して新しく作り直してください。"
+                "- LINE、Gmail、Googleアプリ、ChatGPTアプリ内のブラウザでは、ログインが止まる場合があります。"
+            )
+            st.error(
+                "もしAPIキーを人に見せた、外に出した、貼ってしまった可能性がある場合は、そのキーを削除して新しく作り直してください。"
             )
 
         api_key = str(st.session_state.get("openai_api_key") or "").strip()
@@ -660,6 +747,7 @@ def main() -> None:
         layout="wide",
     )
 
+    _inject_global_style()
     _ensure_dirs()
     _init_session_state()
     _normalize_menu()
