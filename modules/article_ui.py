@@ -515,6 +515,50 @@ def _take_snapshot() -> Dict[str, str]:
     }
 
 
+def _ensure_article_input_backup() -> None:
+    if not isinstance(st.session_state.get("article__input_backup"), dict):
+        st.session_state["article__input_backup"] = {}
+
+
+def _backup_article_inputs() -> None:
+    st.session_state["article__input_backup"] = {
+        KEYS["main_kw"]: str(st.session_state.get(KEYS["main_kw"], "")),
+        KEYS["sub_kw"]: str(st.session_state.get(KEYS["sub_kw"], "")),
+        KEYS["theme"]: str(st.session_state.get(KEYS["theme"], "")),
+        KEYS["memo"]: str(st.session_state.get(KEYS["memo"], "")),
+        KEYS["consult_situation"]: str(st.session_state.get(KEYS["consult_situation"], "")),
+        KEYS["consult_question"]: str(st.session_state.get(KEYS["consult_question"], "")),
+        KEYS["evidence_url"]: str(st.session_state.get(KEYS["evidence_url"], "")),
+        KEYS["evidence_title"]: str(st.session_state.get(KEYS["evidence_title"], "")),
+        KEYS["evidence_facts"]: str(st.session_state.get(KEYS["evidence_facts"], "")),
+        KEYS["evidence_points"]: str(st.session_state.get(KEYS["evidence_points"], "")),
+        KEYS["evidence"]: str(st.session_state.get(KEYS["evidence"], "")),
+        KEYS["suggest"]: str(st.session_state.get(KEYS["suggest"], "")),
+    }
+
+
+def _restore_article_inputs_from_backup() -> None:
+    backup = st.session_state.get("article__input_backup", {}) or {}
+    if not isinstance(backup, dict):
+        return
+
+    for k in (
+        KEYS["main_kw"], KEYS["sub_kw"], KEYS["theme"], KEYS["memo"],
+        KEYS["consult_situation"], KEYS["consult_question"],
+        KEYS["evidence_url"], KEYS["evidence_title"], KEYS["evidence_facts"], KEYS["evidence_points"],
+        KEYS["evidence"], KEYS["suggest"],
+    ):
+        current = st.session_state.get(k, "")
+        if _is_blank(current):
+            value = backup.get(k, "")
+            if not _is_blank(value):
+                st.session_state[k] = str(value)
+
+
+def _clear_article_input_backup() -> None:
+    st.session_state["article__input_backup"] = {}
+
+
 def _save_snapshot() -> None:
     st.session_state[KEYS["snapshot"]] = _take_snapshot()
     st.session_state[KEYS["save_message"]] = "今の状態を控えました。あとで戻したいときに使えます。"
@@ -550,6 +594,7 @@ def _clear_form_only() -> None:
         KEYS["evidence"], KEYS["suggest"],
     ):
         st.session_state[k] = ""
+    _clear_article_input_backup()
     _close_detail_settings()
     st.session_state[KEYS["save_message"]] = "入力欄を空にしました。最初から整理し直したいときに使えます。"
 
@@ -564,6 +609,7 @@ def _clear_generated_only() -> None:
     ):
         st.session_state[k] = ""
 
+    _clear_article_input_backup()
     st.session_state[KEYS["snapshot"]] = {}
     _reset_copy_state()
     _reset_ui_flags()
@@ -1947,6 +1993,8 @@ def render_article_ui(
 ) -> None:
     _ = logs_dir
     _ensure_keys_initialized()
+    _ensure_article_input_backup()
+    _restore_article_inputs_from_backup()
 
     _render_sensitive_notice_box()
 
@@ -2236,3 +2284,4 @@ def render_article_ui(
                         preview_chars=PREVIEW_CHARS_SUGGEST,
                         button_key_suffix="transparency_proof_memo",
                     )
+    _backup_article_inputs()
