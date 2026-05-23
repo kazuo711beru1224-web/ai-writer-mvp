@@ -548,8 +548,8 @@ def _restore_article_inputs_from_backup() -> None:
         KEYS["evidence_url"], KEYS["evidence_title"], KEYS["evidence_facts"], KEYS["evidence_points"],
         KEYS["evidence"], KEYS["suggest"],
     ):
-        current = st.session_state.get(k, "")
-        if _is_blank(current):
+        current = st.session_state.get(k, None)
+        if k not in st.session_state or _is_blank(current):
             value = backup.get(k, "")
             if not _is_blank(value):
                 st.session_state[k] = str(value)
