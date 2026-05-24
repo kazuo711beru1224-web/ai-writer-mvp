@@ -378,6 +378,45 @@ def _check_symbol_rules(text: str) -> List[Finding]:
 
 
 # =========================================
+# B2. 便利表現チェック
+# =========================================
+def _check_convenient_phrases(text: str) -> List[Finding]:
+    findings: List[Finding] = []
+
+    # AIっぽく見える便利表現
+    convenient_phrases = (
+        "これにより",
+        "重要です",
+        "必要です",
+        "可能になります",
+        "することができます",
+        "と言えるでしょう",
+        "求められます",
+        "期待されます",
+    )
+
+    found: List[str] = []
+    for phrase in convenient_phrases:
+        if phrase in text:
+            found.append(phrase)
+
+    if found:
+        findings.append(
+            _make_finding(
+                level="CAUTION",
+                code="便利表現チェック",
+                message=(
+                    "読みやすい言葉ですが、理由や具体例が少ないと、"
+                    "少しぼんやりして見えることがあります。"
+                ),
+                samples=found,
+            )
+        )
+
+    return findings
+
+
+# =========================================
 # C. 誤字候補チェック
 # =========================================
 def _check_typo_suspects(text: str) -> List[Finding]:
@@ -620,6 +659,7 @@ def check_style_core(
     findings.extend(_check_long_sentences(text, max_len=max_sentence_len))
     findings.extend(_check_canonical_replacements(text))
     findings.extend(_check_symbol_rules(text))
+    findings.extend(_check_convenient_phrases(text))
     findings.extend(_check_typo_suspects(text))
     findings.extend(_check_duplicate_word_suspects(text))
 
