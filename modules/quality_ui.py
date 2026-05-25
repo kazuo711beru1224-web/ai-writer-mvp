@@ -6,7 +6,6 @@ import re
 import streamlit as st
 
 from modules.guardrails_core import evaluate_guardrails
-import modules.style_checker as style_checker
 from modules.style_checker import check_style
 from modules.diagnosis_templates import build_buyer_diagnosis
 
@@ -668,13 +667,6 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
     suggest = str(st.session_state.get(KEYS["check_suggest"], "") or "")
     memo = str(st.session_state.get(KEYS["check_memo"], "") or "")
 
-    debug_style_check_executed = False
-    debug_body_len = 0
-    debug_style_level = ""
-    debug_style_codes: list[str] = []
-    debug_style_samples: list[list[str]] = []
-    debug_style_checker_path = ""
-
     if not evidence.strip():
         evidence = _resolve_article_evidence()
     if not suggest.strip():
@@ -753,18 +745,7 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
                 prefer_dekiru=bool(style_prefs.get("prefer_dekiru", False)),
             )
 
-            debug_style_check_executed = True
-            debug_body_len = len(body)
-            debug_style_level = str(getattr(style_res, "level", "SAFE") or "SAFE")
-            debug_style_codes = [
-                str(getattr(f, "code", ""))
-                for f in getattr(style_res, "findings", ()) or ()
-            ]
-            debug_style_samples = [
-                [str(x) for x in (getattr(f, "samples", None) or [])]
-                for f in getattr(style_res, "findings", ()) or ()
-            ]
-            debug_style_checker_path = getattr(style_checker, "__file__", "")
+            
 
             st.session_state[KEYS["diag_level"]] = str(getattr(guardrail_res, "level", "SAFE") or "SAFE")
             st.session_state[KEYS["diag_lines"]] = _format_diag_lines(guardrail_res)
@@ -821,11 +802,4 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
             with st.expander("表記・言い回しのくわしい内容（編集者向け）", expanded=False):
                 st.code(style_lines, language="text")
 
-    if debug_style_check_executed:
-        st.divider()
-        st.markdown("### 【開発確認用】")
-        st.write("本文文字数：", debug_body_len)
-        st.write("表記チェック結果：", debug_style_level)
-        st.write("見つかったチェック：", debug_style_codes)
-        st.write("見つかった samples：", debug_style_samples)
-        st.write("読み込んだ style_checker：", debug_style_checker_path)
+    
