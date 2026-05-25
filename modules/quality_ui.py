@@ -445,21 +445,21 @@ def _serialize_style_payload(res) -> str:
             fix_text = "％やか月などの表記を、記事全体でそろえてください。"
 
         elif code == "便利表現チェック":
-            headline = "少しAIっぽい言い方があります。"
-            lead = "読みやすい言い方ですが、理由や具体例がないと、少しぼんやりして見えることがあります。"
-            issue_label = "便利表現"
-            issue_text = "読者にとって『なぜそうなのか』がわかりにくい表現があります。"
+            headline = "少しぼんやりした言い方があります。"
+            lead = "文章としては読めますが、『なぜ大事なのか』が少し伝わりにくいかもしれません。"
+            issue_label = "理由が少し足りない言い方"
+            issue_text = "『なぜそうなのか』がわかりにくい言い方があります。"
             reason_text = (
-                "『重要です』『必要です』などの言葉だけでは、"
-                "なぜ大事なのかが読者に伝わりにくい場合があります。"
+                "『重要です』『必要です』だけでは、"
+                "読者が次に何をすればいいのか分かりにくくなることがあります。"
             )
             fix_text = (
-                "『なぜそう言えるのか』を一文足してください。"
-                "または、読者が次に何をすればよいかを書いてください。"
+                "理由や具体例を一文加えてください。"
+                "読者が次に何をすればいいかも書きましょう。"
             )
             rewrite_example = (
                 "例：『重要です』"
-                "→『申告期限を過ぎると不利になる場合があるため、早めに確認してください』"
+                "→『あとで困らないように、早めに確認してください』"
             )
 
         elif code == "誤字候補":
@@ -776,7 +776,7 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
         _render_buyer_diagnosis_blocks(diag_items)
 
     if diag_lines:
-        with st.expander("確認のくわしい内容（編集者向け）", expanded=(level in ("CAUTION", "RISK"))):
+        with st.expander("見直しのくわしい内容", expanded=(level in ("CAUTION", "RISK"))):
             st.code(diag_lines, language="text")
 
     # -------------------------
@@ -799,7 +799,7 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
             _render_buyer_diagnosis_blocks(style_items)
 
         if style_lines:
-            with st.expander("表記・言い回しのくわしい内容（編集者向け）", expanded=False):
+            with st.expander("表記・言い回しの見直しのくわしい内容", expanded=False):
                 st.code(style_lines, language="text")
 
     

@@ -406,7 +406,7 @@ def _check_convenient_phrases(text: str) -> List[Finding]:
                 level="CAUTION",
                 code="便利表現チェック",
                 message=(
-                    "読みやすい言葉ですが、理由や具体例が少ないと、"
+                    "読みやすい言葉ですが、『なぜそうか』がわかりにくいと、"
                     "少しぼんやりして見えることがあります。"
                 ),
                 samples=found,
