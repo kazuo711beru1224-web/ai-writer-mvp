@@ -17,6 +17,8 @@ from modules.diagnosis_templates import build_buyer_diagnosis
 KEYS: Dict[str, str] = {
     # 入力
     "check_text": "check__text",
+    "check_text_widget": "quality__manual_text",
+    "check_text_saved": "quality__manual_text_saved",
 
     # 道しるべ（チェック側に保持：記事→チェック貼り付けでコピー）
     "check_evidence": "check__evidence_text",
@@ -35,6 +37,10 @@ KEYS: Dict[str, str] = {
 
     # メッセージ
     "notice": "check__notice",
+
+    # 手動リライト
+    "manual_rewrite_text_widget": "quality__manual_rewrite_text",
+    "manual_rewrite_text_saved": "quality__manual_rewrite_text_saved",
 
     # ボタン
     "btn_paste_latest": "btn_paste_latest",
@@ -93,6 +99,7 @@ ARTICLE_MEMO_KEYS: List[str] = [
 def _ensure_state() -> None:
     """初期化は if key not in で1回だけ（憲法準拠）"""
     must_init = (
+        KEYS["check_text_saved"],
         KEYS["check_text"],
         KEYS["check_evidence"],
         KEYS["check_suggest"],
@@ -104,10 +111,16 @@ def _ensure_state() -> None:
         KEYS["style_lines"],
         KEYS["style_payload_json"],
         KEYS["notice"],
+        KEYS["manual_rewrite_text_saved"],
     )
     for k in must_init:
         if k not in st.session_state:
             st.session_state[k] = ""
+
+
+def _sync_widget_to_saved(widget_key: str, saved_key: str) -> None:
+    """Widget の変更内容を保存用 state に同期する。"""
+    st.session_state[saved_key] = str(st.session_state.get(widget_key, "") or "")
 
 
 def _first_nonempty(keys: List[str]) -> str:
@@ -278,7 +291,8 @@ def _paste_latest_generated() -> None:
     _ensure_state()
 
     latest = _resolve_article_body()
-    st.session_state[KEYS["check_text"]] = latest if latest else ""
+    st.session_state[KEYS["check_text_saved"]] = latest if latest else ""
+    st.session_state[KEYS["check_text_widget"]] = latest if latest else ""
 
     st.session_state[KEYS["check_evidence"]] = _resolve_article_evidence()
     st.session_state[KEYS["check_suggest"]] = _resolve_article_suggest()
@@ -303,10 +317,13 @@ def _paste_latest_generated() -> None:
 def _clear_check_text() -> None:
     """文章チェック欄をクリア（道しるべも一緒にクリア）"""
     _ensure_state()
-    st.session_state[KEYS["check_text"]] = ""
+    st.session_state[KEYS["check_text_saved"]] = ""
+    st.session_state[KEYS["check_text_widget"]] = ""
     st.session_state[KEYS["check_evidence"]] = ""
     st.session_state[KEYS["check_suggest"]] = ""
     st.session_state[KEYS["check_memo"]] = ""
+    st.session_state[KEYS["manual_rewrite_text_saved"]] = ""
+    st.session_state[KEYS["manual_rewrite_text_widget"]] = ""
     st.session_state[KEYS["diag_level"]] = ""
     st.session_state[KEYS["diag_lines"]] = ""
     st.session_state[KEYS["diag_payload_json"]] = ""
@@ -612,7 +629,7 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
             st.write(lead)
 
         if code == "便利表現チェック":
-            body = str(st.session_state.get(KEYS["check_text"], "") or "")
+            body = str(st.session_state.get(KEYS["check_text_saved"], "") or "")
             if body:
                 st.markdown("**直す場所がわかる本文**")
                 body_html = _escape_and_mark(body, matched_texts)
@@ -652,18 +669,24 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
 
                 # ユーザが自分で修正案を書くための空欄（初期値は空）
                 st.markdown("**自分で直した文章を書く欄**")
+                manual_rewrite_widget = KEYS["manual_rewrite_text_widget"]
+                manual_rewrite_saved = KEYS["manual_rewrite_text_saved"]
+                if manual_rewrite_widget not in st.session_state:
+                    st.session_state[manual_rewrite_widget] = st.session_state.get(manual_rewrite_saved, "")
+
                 st.text_area(
                     "",
-                    value="",
-                    key="quality__manual_rewrite_text",
+                    key=manual_rewrite_widget,
                     height=240,
                     help="書き直した文章をここに入力し、上の『確認したい文章』に貼り直して再確認してください。",
                     label_visibility="collapsed",
+                    on_change=_sync_widget_to_saved,
+                    kwargs={"widget_key": manual_rewrite_widget, "saved_key": manual_rewrite_saved},
                 )
 
-            st.markdown("**次の確認**")
-            st.write("上の考え方を参考にして文章を直してください。")
-            st.write("直した文章を『確認したい文章』に貼り直して、もう一度確認してください。")
+                st.markdown("**次の確認**")
+                st.write("上の考え方を参考にして文章を直してください。")
+                st.write("直した文章を『確認したい文章』に貼り直して、もう一度確認してください。")
 
         else:
             generic_fallback = (
@@ -746,7 +769,20 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
     st.markdown("### 確認したい文章")
     st.caption("公開前に見直したい本文をここへ入れてください。")
     st.caption("例：記事モードで作った下書き / 外部で整えた本文 / 公開前の最終稿")
-    st.text_area("文章入力欄", key=KEYS["check_text"], height=360, label_visibility="collapsed")
+
+    check_text_widget = KEYS["check_text_widget"]
+    check_text_saved = KEYS["check_text_saved"]
+    if check_text_widget not in st.session_state:
+        st.session_state[check_text_widget] = st.session_state.get(check_text_saved, "")
+
+    st.text_area(
+        "文章入力欄",
+        key=check_text_widget,
+        height=360,
+        label_visibility="collapsed",
+        on_change=_sync_widget_to_saved,
+        kwargs={"widget_key": check_text_widget, "saved_key": check_text_saved},
+    )
 
     st.divider()
 
@@ -787,7 +823,7 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
 
     st.write("準備ができたら、気になる点がないか確認します。")
     if st.button("公開前の確認をする", use_container_width=True, key=KEYS["btn_diagnose"]):
-        body = str(st.session_state.get(KEYS["check_text"], "") or "").strip()
+        body = str(st.session_state.get(KEYS["check_text_saved"], "") or "").strip()
 
         ev = str(evidence or "").strip()
         sg = str(suggest or "").strip()
