@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Dict, Optional, Any, List
+import html
 import json
 import re
 import streamlit as st
@@ -326,6 +327,8 @@ def _format_diag_lines(res) -> str:
         lvl = getattr(f, "level", "")
         code = getattr(f, "code", "")
         msg = getattr(f, "message", "")
+        if code == "便利表現チェック":
+            continue
         lines.append(f"- {lvl} / {code}：{msg}")
         samples = getattr(f, "samples", None)
         if samples:
@@ -356,11 +359,6 @@ def _serialize_guardrail_payload(res) -> str:
         )
 
         rewrite_example = ""
-        if rule_key == "改正トーク要確認":
-            rewrite_example = (
-                "例：『近年、相続税の仕組みについて理解することは重要です。』"
-                "→『相続税の仕組みについて理解しておくことは重要です。』"
-            )
 
         items.append({
             "rank": str(diag.get("rank", "CAUTION")),
@@ -445,22 +443,18 @@ def _serialize_style_payload(res) -> str:
             fix_text = "％やか月などの表記を、記事全体でそろえてください。"
 
         elif code == "便利表現チェック":
-            headline = "少しぼんやりした言い方があります。"
+            headline = "少し直した方がよい言い方があります。"
             lead = "文章としては読めますが、『なぜ大事なのか』が少し伝わりにくいかもしれません。"
             issue_label = "理由が少し足りない言い方"
             issue_text = "『なぜそうなのか』がわかりにくい言い方があります。"
             reason_text = (
-                "『重要です』『必要です』だけでは、"
-                "読者が次に何をすればいいのか分かりにくくなることがあります。"
+                "この言葉だけでは、読者が「なぜ大事なのか」「次に何をすればよいのか」を"
+                "分かりにくく感じることがあります。"
             )
             fix_text = (
-                "理由や具体例を一文加えてください。"
-                "読者が次に何をすればいいかも書きましょう。"
+                "理由や具体例を一文足してください。読者が次に何をすればよいかも書きましょう。"
             )
-            rewrite_example = (
-                "例：『重要です』"
-                "→『あとで困らないように、早めに確認してください』"
-            )
+            rewrite_example = ""
 
         elif code == "誤字候補":
             headline = "誤字や言い間違いの可能性がある箇所があります。"
@@ -528,6 +522,7 @@ def _serialize_style_payload(res) -> str:
             "fix_text": fix_text,
             "rewrite_example": rewrite_example,
             "matched_texts": matched_texts,
+            "code": code,
         })
 
     try:
@@ -553,6 +548,25 @@ def _load_payload(raw_text: str) -> List[Dict[str, Any]]:
         return []
 
 
+def _escape_and_mark(text: str, highlights: List[str]) -> str:
+    escaped = html.escape(str(text or ""))
+    if not highlights:
+        return escaped.replace("\n", "<br>")
+    ordered = sorted({str(h) for h in highlights if str(h).strip()}, key=len, reverse=True)
+    for highlight in ordered:
+        safe_highlight = html.escape(highlight)
+        if not safe_highlight:
+            continue
+        escaped = escaped.replace(safe_highlight, f"<mark>{safe_highlight}</mark>")
+    return escaped.replace("\n", "<br>")
+
+
+def _suggest_rewrite_text(body: str, highlights: List[str]) -> str:
+    # 単純な語句置換は不自然なAI語になりやすいため行わない。
+    # 将来的に高品質な自動言い換えを導入する場合はここに実装する。
+    return ""
+
+
 def _render_badge(title: str, level: str) -> None:
     badge_map = {
         "SAFE": "✅ SAFE",
@@ -569,6 +583,7 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
     結論 → 該当箇所 → 理由 → 直し方
     """
     for item in items:
+        code = str(item.get("code", "") or "").strip()
         headline = str(item.get("headline", "") or "").strip()
         lead = str(item.get("lead", "") or "").strip()
         issue_label = str(item.get("issue_label", "") or "").strip()
@@ -585,29 +600,84 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
         if lead:
             st.write(lead)
 
-        if issue_label or issue_text:
-            st.markdown("**確認したい箇所**")
-            if issue_label:
-                st.write(f"・{issue_label}")
-            if issue_text:
-                st.write(issue_text)
+        if code == "便利表現チェック":
+            body = str(st.session_state.get(KEYS["check_text"], "") or "")
+            if body:
+                st.markdown("**直す場所がわかる本文**")
+                body_html = _escape_and_mark(body, matched_texts)
+                st.markdown(body_html, unsafe_allow_html=True)
 
-        if matched_texts:
-            st.markdown("**本文の該当箇所**")
-            for t in matched_texts:
-                st.markdown(f"- {t}")
+            if matched_texts:
+                st.markdown("**直した方がよい言葉**")
+                for text in matched_texts:
+                    st.markdown(f"- {html.escape(str(text))}")
 
-        if reason_text:
-            st.markdown("**理由**")
-            st.write(reason_text)
+            if reason_text:
+                st.markdown("**なぜ直すのか**")
+                st.write(reason_text)
 
-        if fix_text:
-            st.markdown("**直し方**")
-            st.write(fix_text)
+            if fix_text:
+                st.markdown("**直し方**")
+                st.write(fix_text)
 
-        if rewrite_example:
-            st.markdown("**言い換え例**")
-            st.write(rewrite_example)
+            if body:
+                # 汎用的な修正の考え方を提示
+                st.markdown("**修正の考え方**")
+                st.write("この文章は、言葉を置き換えるだけでは自然になりません。")
+                st.write("")
+                st.write("次の2つを足すと、読みやすくなります。")
+                st.write("")
+                st.markdown("- なぜ大事なのか")
+                st.markdown("- 読者が次に何をすればよいのか")
+                st.write("")
+
+                st.markdown("**直し方の例**")
+                st.write("元の文：")
+                st.markdown(_escape_and_mark("商品の特徴を確認することは重要です。", []), unsafe_allow_html=True)
+                st.write("")
+                st.write("直し方：")
+                st.markdown(_escape_and_mark("お客様に分かりやすく説明するために、商品の特徴を先に確認しておきましょう。", []), unsafe_allow_html=True)
+                st.write("")
+
+                # ユーザが自分で修正案を書くための空欄（初期値は空）
+                st.markdown("**自分で直した文章を書く欄**")
+                st.text_area(
+                    "",
+                    value="",
+                    key="quality__manual_rewrite_text",
+                    height=240,
+                    help="書き直した文章をここに入力し、上の『確認したい文章』に貼り直して再確認してください。",
+                    label_visibility="collapsed",
+                )
+
+            st.markdown("**次の確認**")
+            st.write("上の考え方を参考にして文章を直してください。")
+            st.write("直した文章を『確認したい文章』に貼り直して、もう一度確認してください。")
+
+        else:
+            if issue_label or issue_text:
+                st.markdown("**確認したい箇所**")
+                if issue_label:
+                    st.write(f"・{issue_label}")
+                if issue_text:
+                    st.write(issue_text)
+
+            if matched_texts:
+                st.markdown("**本文の該当箇所**")
+                for t in matched_texts:
+                    st.markdown(f"- {t}")
+
+            if reason_text:
+                st.markdown("**理由**")
+                st.write(reason_text)
+
+            if fix_text:
+                st.markdown("**直し方**")
+                st.write(fix_text)
+
+            if rewrite_example:
+                st.markdown("**言い換え例**")
+                st.write(rewrite_example)
 
 
 def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
@@ -799,7 +869,7 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
             _render_buyer_diagnosis_blocks(style_items)
 
         if style_lines:
-            with st.expander("表記・言い回しの見直しのくわしい内容", expanded=False):
+            with st.expander("表記・言い回しの見直し", expanded=False):
                 st.code(style_lines, language="text")
 
     
