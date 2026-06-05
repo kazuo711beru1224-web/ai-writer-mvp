@@ -324,12 +324,13 @@ def _format_diag_lines(res) -> str:
     lines: List[str] = []
     findings = getattr(res, "findings", None) or []
     for f in findings:
-        lvl = getattr(f, "level", "")
-        code = getattr(f, "code", "")
         msg = getattr(f, "message", "")
+        if not str(msg).strip():
+            continue
+        code = getattr(f, "code", "")
         if code == "便利表現チェック":
             continue
-        lines.append(f"- {lvl} / {code}：{msg}")
+        lines.append(f"- {msg}")
         samples = getattr(f, "samples", None)
         if samples:
             try:
@@ -357,6 +358,16 @@ def _serialize_guardrail_payload(res) -> str:
             rule_key=rule_key,
             matched_texts=matched_texts,
         )
+
+        if diag.get("headline") == "公開前に確認したい点があります。":
+            diag.update({
+                "headline": "公開前に見直したい表現があります。",
+                "lead": "本文の中に、少し強く聞こえる言葉があります。根拠と照らし合わせて、このまま使ってよいか確認してください。",
+                "issue_label": "見直したい言葉",
+                "issue_text": "",
+                "reason_text": "根拠が弱いまま断定すると、読者に誤解を与えることがあります。",
+                "fix_text": "一次情報や根拠メモと見比べて、言い切ってよい表現か確認してください。",
+            })
 
         rewrite_example = ""
 
@@ -655,17 +666,27 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
             st.write("直した文章を『確認したい文章』に貼り直して、もう一度確認してください。")
 
         else:
-            if issue_label or issue_text:
-                st.markdown("**確認したい箇所**")
-                if issue_label:
-                    st.write(f"・{issue_label}")
-                if issue_text:
-                    st.write(issue_text)
+            generic_fallback = (
+                issue_label == "確認したい箇所"
+                and issue_text == "本文の表現を確認してください。"
+            )
 
-            if matched_texts:
-                st.markdown("**本文の該当箇所**")
+            if generic_fallback and matched_texts:
+                st.markdown("**見直したい言葉**")
                 for t in matched_texts:
                     st.markdown(f"- {t}")
+            else:
+                if issue_label or issue_text:
+                    st.markdown("**確認したい箇所**")
+                    if issue_label:
+                        st.write(f"・{issue_label}")
+                    if issue_text:
+                        st.write(issue_text)
+
+                if matched_texts:
+                    st.markdown("**本文の該当箇所**")
+                    for t in matched_texts:
+                        st.markdown(f"- {t}")
 
             if reason_text:
                 st.markdown("**理由**")
@@ -730,8 +751,8 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
     st.divider()
 
     st.markdown("### 🔎 確認の道しるべ")
-    st.caption("※外部検索は行いません。記事モードで入力した根拠や関連語を表示します。")
-    st.caption("ここに出る内容を見ながら、『本文にない数字や言い過ぎがないか』を確認できます。")
+    st.write("ここでは、記事モードで入れた根拠メモや関連語を確認できます。")
+    st.write("本文にない数字、言い過ぎ、根拠のない断定がないかを見直してください。")
 
     evidence = str(st.session_state.get(KEYS["check_evidence"], "") or "")
     suggest = str(st.session_state.get(KEYS["check_suggest"], "") or "")
@@ -748,22 +769,19 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
     if evidence.strip():
         st.write(evidence)
     else:
-        st.write("（未入力）")
-        st.caption("記事モードで根拠メモを入れておくと、ここでの確認がしやすくなります。")
+        st.write("未入力です。必要な数字や資料名がある場合は、記事モードで入力してください。")
 
     st.markdown("**読者が一緒に検索しそうな言葉**")
     if suggest.strip():
         st.write(suggest)
     else:
-        st.write("（未入力）")
-        st.caption("記事モードで関連する言葉を入れておくと、主題からずれていないか確認しやすくなります。")
+        st.write("未入力です。読者が検索しそうな言葉があれば、記事モードで入力してください。")
 
     st.markdown("**読者や書き方のメモ**")
     if memo.strip():
         st.write(memo)
     else:
-        st.write("（未入力）")
-        st.caption("記事モードで書き方のメモを入れておくと、案件ルールの確認にも使えます。")
+        st.write("未入力です。書き方のルールがある場合は、記事モードで入力してください。")
 
     st.divider()
 
