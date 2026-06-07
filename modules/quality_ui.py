@@ -400,13 +400,15 @@ def _serialize_guardrail_payload(res) -> str:
             "matched_texts": [str(x) for x in diag.get("matched_texts", []) if str(x).strip()],
         })
 
+    items = _group_similar_diagnosis_items(items)
+
     try:
         return json.dumps(items, ensure_ascii=False)
     except Exception:
         return "[]"
 
 
-def _serialize_style_payload(res) -> str:
+def _serialize_style_payload(res, body_text: str = "") -> str:
     """
     style_checker の結果を、購入者向け表示用のJSON文字列へ変換する。
     """
@@ -553,10 +555,154 @@ def _serialize_style_payload(res) -> str:
             "code": code,
         })
 
+    items.extend(_build_common_kanji_misuse_items(body_text))
+
+    # グループ化処理：同じ説明を持つ診断をまとめる
+    items = _group_similar_diagnosis_items(items)
+
     try:
         return json.dumps(items, ensure_ascii=False)
     except Exception:
         return "[]"
+
+
+def _build_common_kanji_misuse_items(body_text: str) -> List[Dict[str, Any]]:
+    """
+    同音異義語・漢字誤用を検出し、文脈に応じた候補を提示する。
+    ベル憲法準拠：「間違い」と断定せず、「確認してください」と表示。
+    複数の候補は1つのアイテムにまとめる。
+    """
+    items: List[Dict[str, Any]] = []
+    
+    if not isinstance(body_text, str):
+        return items
+    
+    found_terms: List[str] = []
+    rules = [
+        {
+            "base_term": "進める",
+            "replacement": "勧める",
+            "variants": ["進める", "進めます", "進め"],
+            "context_keywords": ["お客様", "商品", "購入", "対象商品", "新商品", "販売", "接客", "提案"],
+        },
+        {
+            "base_term": "意志",
+            "replacement": "意思",
+            "variants": ["意志"],
+            "context_keywords": ["本人", "お客様", "利用者", "家族", "顧客"],
+        },
+        {
+            "base_term": "向かえる",
+            "replacement": "迎える",
+            "variants": ["向かえる", "向かえます", "向かえ"],
+            "context_keywords": ["お客様", "来店客", "利用者", "読者", "相手", "人"],
+        },
+        {
+            "base_term": "向かい入れる",
+            "replacement": "迎え入れる",
+            "variants": ["向かい入れる", "向かい入れます", "向かい入れ"],
+            "context_keywords": ["お客様", "来店客", "利用者", "読者", "相手", "人"],
+        },
+    ]
+    
+    lines = body_text.split('\n')
+    for line in lines:
+        if not line.strip():
+            continue
+
+        for rule in rules:
+            if any(term in line for term in rule["variants"]):
+                if not any(keyword in line for keyword in rule["context_keywords"]):
+                    continue
+
+                example_text = f"{rule['base_term']} → {rule['replacement']}"
+                if example_text not in found_terms:
+                    found_terms.append(example_text)
+    
+    if found_terms:
+        items.append({
+            "rank": "CAUTION",
+            "headline": "見直したい言葉があります。",
+            "lead": "本文の中に、意味が近い漢字と迷いやすい言葉があります。",
+            "issue_label": "同音異義語候補",
+            "issue_text": "確認したい箇所",
+            "reason_text": "意味によって、使う漢字が変わります。",
+            "fix_text": "前後の意味を確認して、必要な場合だけ直してください。",
+            "rewrite_example": "",
+            "matched_texts": found_terms,
+            "code": "漢字誤用_同音異義語",
+        })
+    
+    return items
+
+
+def _group_similar_diagnosis_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    同じ headline/lead/reason_text/fix_text を持つ診断をグループ化する。
+    ベル憲法準拠：同じ種類の注意は1つにまとめて表示。
+    """
+    def _to_list(value: Any) -> List[str]:
+        if isinstance(value, list):
+            return [str(x) for x in value if str(x).strip()]
+        if value is None:
+            return []
+        value_str = str(value).strip()
+        return [value_str] if value_str else []
+
+    def _uniq(values: List[str]) -> List[str]:
+        seen = set()
+        out: List[str] = []
+        for value in values:
+            if value not in seen:
+                seen.add(value)
+                out.append(value)
+        return out
+
+    grouped: Dict[str, Dict[str, Any]] = {}
+
+    for item in items:
+        key = (
+            str(item.get("headline", "")),
+            str(item.get("lead", "")),
+            str(item.get("reason_text", "")),
+            str(item.get("fix_text", "")),
+        )
+
+        if key not in grouped:
+            grouped[key] = item.copy()
+            grouped[key]["matched_texts"] = _to_list(grouped[key].get("matched_texts", []))
+            grouped[key]["issue_label"] = _to_list(grouped[key].get("issue_label", []))
+            grouped[key]["issue_text"] = _to_list(grouped[key].get("issue_text", []))
+            grouped[key]["rewrite_example"] = _to_list(grouped[key].get("rewrite_example", []))
+        else:
+            existing = grouped[key]
+            existing_matched = _to_list(existing.get("matched_texts", []))
+            new_matched = _to_list(item.get("matched_texts", []))
+            existing["matched_texts"] = _uniq(existing_matched + new_matched)
+
+            existing_labels = _to_list(existing.get("issue_label", []))
+            new_labels = _to_list(item.get("issue_label", []))
+            merged_labels = _uniq(existing_labels + new_labels)
+            existing["issue_label"] = merged_labels if len(merged_labels) > 1 else (merged_labels[0] if merged_labels else "")
+
+            existing_texts = _to_list(existing.get("issue_text", []))
+            new_texts = _to_list(item.get("issue_text", []))
+            merged_texts = _uniq(existing_texts + new_texts)
+            existing["issue_text"] = merged_texts if len(merged_texts) > 1 else (merged_texts[0] if merged_texts else "")
+
+            existing_rewrites = _to_list(existing.get("rewrite_example", []))
+            new_rewrites = _to_list(item.get("rewrite_example", []))
+            merged_rewrites = _uniq(existing_rewrites + new_rewrites)
+            existing["rewrite_example"] = merged_rewrites if len(merged_rewrites) > 1 else (merged_rewrites[0] if merged_rewrites else "")
+
+    # 1つだけのリストは文字列に戻す
+    for item in grouped.values():
+        for field in ("issue_label", "issue_text", "rewrite_example"):
+            value = item.get(field)
+            if isinstance(value, list) and len(value) == 1:
+                item[field] = value[0]
+
+    return list(grouped.values())
 
 
 def _load_payload(raw_text: str) -> List[Dict[str, Any]]:
@@ -614,12 +760,21 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
         code = str(item.get("code", "") or "").strip()
         headline = str(item.get("headline", "") or "").strip()
         lead = str(item.get("lead", "") or "").strip()
-        issue_label = str(item.get("issue_label", "") or "").strip()
-        issue_text = str(item.get("issue_text", "") or "").strip()
+        issue_label_raw = item.get("issue_label", "") or ""
+        issue_text_raw = item.get("issue_text", "") or ""
         reason_text = str(item.get("reason_text", "") or "").strip()
         fix_text = str(item.get("fix_text", "") or "").strip()
-        rewrite_example = str(item.get("rewrite_example", "") or "").strip()
+        rewrite_example = item.get("rewrite_example", "") or ""
         matched_texts = item.get("matched_texts", []) or []
+
+        def normalize_list(value: Any) -> List[str]:
+            if isinstance(value, list):
+                return [str(x).strip() for x in value if str(x).strip()]
+            text = str(value).strip()
+            return [text] if text else []
+
+        issue_labels = normalize_list(issue_label_raw)
+        issue_texts = normalize_list(issue_text_raw)
 
         st.markdown("---")
 
@@ -690,8 +845,8 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
 
         else:
             generic_fallback = (
-                issue_label == "確認したい箇所"
-                and issue_text == "本文の表現を確認してください。"
+                issue_labels == ["確認したい箇所"]
+                and issue_texts == ["本文の表現を確認してください。"]
             )
 
             if generic_fallback and matched_texts:
@@ -699,12 +854,12 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
                 for t in matched_texts:
                     st.markdown(f"- {t}")
             else:
-                if issue_label or issue_text:
+                if issue_labels or issue_texts:
                     st.markdown("**確認したい箇所**")
-                    if issue_label:
-                        st.write(f"・{issue_label}")
-                    if issue_text:
-                        st.write(issue_text)
+                    for label in issue_labels:
+                        st.write(f"・{label}")
+                    for text in issue_texts:
+                        st.write(text)
 
                 if matched_texts:
                     st.markdown("**本文の該当箇所**")
@@ -875,9 +1030,14 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
             st.session_state[KEYS["diag_lines"]] = _format_diag_lines(guardrail_res)
             st.session_state[KEYS["diag_payload_json"]] = _serialize_guardrail_payload(guardrail_res)
 
-            st.session_state[KEYS["style_level"]] = str(getattr(style_res, "level", "SAFE") or "SAFE")
+            style_level = str(getattr(style_res, "level", "SAFE") or "SAFE")
             st.session_state[KEYS["style_lines"]] = _format_diag_lines(style_res)
-            st.session_state[KEYS["style_payload_json"]] = _serialize_style_payload(style_res)
+            st.session_state[KEYS["style_payload_json"]] = _serialize_style_payload(style_res, body)
+            if style_level != "RISK":
+                style_items = _load_payload(st.session_state[KEYS["style_payload_json"]])
+                if any(item.get("rank") == "CAUTION" for item in style_items):
+                    style_level = "CAUTION"
+            st.session_state[KEYS["style_level"]] = style_level
 
     # -------------------------
     # A. 内容の安全チェック
