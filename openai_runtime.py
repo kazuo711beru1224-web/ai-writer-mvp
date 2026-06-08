@@ -102,11 +102,8 @@ def generate_markdown(
     prompt = (prompt or "").strip()
 
     if not use_real_api:
-        head = "# デモ生成（API未使用）\n\n"
-        body = "入力内容をもとに、ここに下書きが生成されます。\n\n"
-        body += "----\n\n"
-        body += "## プロンプト（デモ）\n\n"
-        body += (prompt[:1200] + ("\n\n...（省略）\n" if len(prompt) > 1200 else "\n")) if prompt else "（プロンプトが空です）\n"
+        head = "# デモ下書き（API未使用）\n\n"
+        body = "入力内容をもとに、ここに下書きが生成されます。\n"
         return head + body
 
     if not openai_api_key or not openai_api_key.strip():

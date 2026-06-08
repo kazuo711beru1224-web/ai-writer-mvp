@@ -1951,7 +1951,7 @@ def _render_detail_settings() -> None:
             )
 
 
-def _render_generation_summary() -> None:
+def _render_generation_summary(*, use_real_api: bool) -> None:
     proof_ev = str(st.session_state.get(KEYS["proof_evidence"], "") or "")
     proof_ev_compact = str(st.session_state.get(KEYS["proof_evidence_compact"], "") or "")
     used_sources = []
@@ -1965,7 +1965,10 @@ def _render_generation_summary() -> None:
         if not ln.startswith("URL:") and not ln.startswith("資料名:"):
             used_points.append(ln)
 
-    st.success("✅ 下書きができました")
+    if use_real_api:
+        st.success("✅ 下書きができました")
+    else:
+        st.success("✅ デモ下書きを表示しました。本番AIは使っていません。")
 
     if used_sources:
         st.markdown("### 📚 今回使った確認先")
@@ -2121,7 +2124,7 @@ def render_article_ui(
     if _is_blank(last_text):
         st.info("※まだ下書きは作られていません。上の『下書きを作る』を押してください。")
     else:
-        _render_generation_summary()
+        _render_generation_summary(use_real_api=use_real_api)
 
         proof_evidence = str(st.session_state.get(KEYS["proof_evidence"], "") or "").strip()
         current_evidence = str(_get_effective_input_evidence_text()).strip()
