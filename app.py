@@ -54,7 +54,6 @@ MENU_OPTIONS = [
     MENU_CHECK,
     MENU_HISTORY,
     MENU_TERMS,
-    MENU_CONSENT,
 ]
 
 # =========================
