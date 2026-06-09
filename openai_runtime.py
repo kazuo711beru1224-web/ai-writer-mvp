@@ -103,7 +103,15 @@ def generate_markdown(
 
     if not use_real_api:
         head = "# デモ下書き（API未使用）\n\n"
-        body = "入力内容をもとに、ここに下書きが生成されます。\n"
+        body = """これは、APIキーを入力していないときに表示されるサンプルです。
+本番AIは使っていません。
+
+例：
+雨の日でも立ち寄りやすいように、温かい飲み物とすぐ食べられる商品を入口近くで案内します。
+短いPOPでは、「帰り道に、ほっと一息。」のように、お客様の気持ちに合わせた一言を使います。
+
+APIキーを入力すると、入力内容に合わせた下書きをAIで作成できます。
+"""
         return head + body
 
     if not openai_api_key or not openai_api_key.strip():
