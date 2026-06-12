@@ -573,10 +573,10 @@ def _build_common_kanji_misuse_items(body_text: str) -> List[Dict[str, Any]]:
     複数の候補は1つのアイテムにまとめる。
     """
     items: List[Dict[str, Any]] = []
-    
+
     if not isinstance(body_text, str):
         return items
-    
+
     found_terms: List[str] = []
     rules = [
         {
@@ -604,7 +604,7 @@ def _build_common_kanji_misuse_items(body_text: str) -> List[Dict[str, Any]]:
             "context_keywords": ["お客様", "来店客", "利用者", "読者", "相手", "人"],
         },
     ]
-    
+
     lines = body_text.split('\n')
     for line in lines:
         if not line.strip():
@@ -618,7 +618,7 @@ def _build_common_kanji_misuse_items(body_text: str) -> List[Dict[str, Any]]:
                 example_text = f"{rule['base_term']} → {rule['replacement']}"
                 if example_text not in found_terms:
                     found_terms.append(example_text)
-    
+
     if found_terms:
         items.append({
             "rank": "CAUTION",
@@ -632,7 +632,7 @@ def _build_common_kanji_misuse_items(body_text: str) -> List[Dict[str, Any]]:
             "matched_texts": found_terms,
             "code": "漢字誤用_同音異義語",
         })
-    
+
     return items
 
 
@@ -854,10 +854,16 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
                 for t in matched_texts:
                     st.markdown(f"- {t}")
             else:
-                if issue_labels or issue_texts:
+                if issue_labels:
                     st.markdown("**確認したい箇所**")
                     for label in issue_labels:
-                        st.write(f"・{label}")
+                        if label != "確認したい箇所":
+                            st.markdown(f"- {label}")
+                    if issue_texts:
+                        for text in issue_texts:
+                            st.write(text)
+                elif issue_texts:
+                    st.markdown("**確認したい箇所**")
                     for text in issue_texts:
                         st.write(text)
 
@@ -1024,7 +1030,7 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
                 prefer_dekiru=bool(style_prefs.get("prefer_dekiru", False)),
             )
 
-            
+
 
             st.session_state[KEYS["diag_level"]] = str(getattr(guardrail_res, "level", "SAFE") or "SAFE")
             st.session_state[KEYS["diag_lines"]] = _format_diag_lines(guardrail_res)
@@ -1086,4 +1092,4 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
             with st.expander("表記・言い回しの見直し", expanded=False):
                 st.code(style_lines, language="text")
 
-    
+

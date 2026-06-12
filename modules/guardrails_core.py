@@ -462,6 +462,17 @@ _SECURITY_WORDS = (
     "防衛装備", "武器輸出", "防衛装備移転", "自衛隊", "脅威",
 )
 
+_PROMOTION_WORDS = (
+    "店頭", "POP", "販促", "売り場", "商品紹介", "来店客", "来店客数", "来店",
+    "コンビニ", "おにぎり", "弁当", "パン", "飲み物", "お客様", "ドラッグストア",
+    "軽食", "スムージー", "ホットコーヒー", "セール", "半額", "値引き",
+)
+
+_NEWS_RECENCY_STRONG_WORDS = (
+    "速報", "ニュース", "事故", "転覆", "死傷者", "戦争", "侵攻", "停戦",
+    "声明", "会談", "外交", "選挙", "災害", "政治", "政権", "政府", "法改正",
+)
+
 
 def _contains_any_phrase(text: str, phrases: Tuple[str, ...]) -> bool:
     t = str(text or "")
@@ -474,6 +485,12 @@ def _is_latest_news_topic(body_text: str, evidence_text: str, suggest_text: str)
         str(evidence_text or ""),
         str(suggest_text or ""),
     ])
+
+    # 店頭POP・販促文脈では、「今」「今後」「必要です」などの弱い語だけで
+    # 最新ニュース扱いにしない。ニュース系の強い語がある場合だけ注意を出す。
+    if _contains_any_phrase(blob, _PROMOTION_WORDS):
+        return _contains_any_phrase(blob, _NEWS_RECENCY_STRONG_WORDS)
+
     return _contains_any_phrase(blob, _LATEST_NEWS_WORDS) or _contains_any_phrase(blob, _SPORTS_WORDS)
 
 
@@ -483,6 +500,12 @@ def _is_forecast_topic(body_text: str, evidence_text: str, suggest_text: str) ->
         str(evidence_text or ""),
         str(suggest_text or ""),
     ])
+
+    # 店頭POP・販促文脈では、「今後」「必要です」「求められます」などを
+    # 未来予測・時事見通しとは扱わない。言い回しチェック側に任せる。
+    if _contains_any_phrase(blob, _PROMOTION_WORDS):
+        return False
+
     return _contains_any_phrase(blob, _FORECAST_WORDS)
 
 

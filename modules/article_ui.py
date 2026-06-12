@@ -146,6 +146,16 @@ BACKGROUND_KW: Tuple[str, ...] = (
     "違い", "わかりやすく", "解説",
 )
 
+PROMOTION_KW: Tuple[str, ...] = (
+    "店頭", "POP", "販促", "売り場", "商品紹介", "来店客", "来店客数", "来店",
+    "コンビニ", "おにぎり", "弁当", "パン", "飲み物", "お客様", "ドラッグストア",
+)
+
+NEWS_RECENCY_STRONG_KW: Tuple[str, ...] = (
+    "速報", "ニュース", "事故", "転覆", "死傷者", "戦争", "侵攻", "停戦",
+    "声明", "会談", "外交", "選挙", "災害", "政治", "政権", "政府", "法改正",
+)
+
 QUESTION_TYPE_LABELS: Dict[str, str] = {
     "institutional": "制度・法律・お金系",
     "latest_news": "最新ニュース・時事系",
@@ -899,8 +909,12 @@ def _classify_question_type(blob: str) -> str:
     if _contains_any(t, TAX_LAW_KW) or _contains_any(t, PENSION_KW) or _contains_any(t, CARE_KW) or _contains_any(t, INSURANCE_KW):
         return "institutional"
 
-    if _contains_any(t, NEWS_RECENCY_KW):
-        return "latest_news"
+    if _contains_any(t, PROMOTION_KW):
+        if _contains_any(t, NEWS_RECENCY_KW) and _contains_any(t, NEWS_RECENCY_STRONG_KW):
+            return "latest_news"
+    else:
+        if _contains_any(t, NEWS_RECENCY_KW):
+            return "latest_news"
 
     if _contains_any(t, FORECAST_KW):
         return "forecast"
@@ -1769,7 +1783,7 @@ def _render_guardrail_meter(*, body_text: str, evidence_text: str) -> str:
     _render_buyer_diagnosis_blocks(res)
 
     if getattr(res, "findings", None):
-        with st.expander("確認の詳細（編集者向け）", expanded=(res.level != "SAFE")):
+        with st.expander("見直しのくわしい内容", expanded=(res.level != "SAFE")):
             for f in res.findings:
                 st.write(f"- **{f.level} / {f.code}**：{f.message}")
                 samples = getattr(f, "samples", None)
