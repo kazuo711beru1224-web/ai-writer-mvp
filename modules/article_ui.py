@@ -1984,7 +1984,7 @@ def _render_generation_summary(*, use_real_api: bool) -> None:
     if use_real_api:
         st.success("✅ 下書きができました")
     else:
-        st.success("✅ デモ下書きを表示しました。本番AIは使っていません。")
+        st.success("✅ サンプルを表示しました。本番AIはまだ使っていません。")
 
     if used_sources:
         st.markdown("### 📚 今回使った確認先")
