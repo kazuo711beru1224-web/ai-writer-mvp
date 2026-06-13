@@ -16,7 +16,7 @@ def test_generate_markdown_demo_does_not_call_openai(monkeypatch):
         timeout_sec=10,
     )
 
-    assert "デモ下書き（API未使用）" in result
+    assert "サンプル表示" in result
     assert "プロンプト（デモ）" not in result
     assert "最重要ルール" not in result
     assert "あなたは日本語でSEO記事" not in result
