@@ -2196,7 +2196,7 @@ def render_article_ui(
 
         with st.expander("AIが最初に作った文章を見る", expanded=False):
             st.caption("見比べたいときだけ開いてください。通常は上の本文欄だけで進められます。")
-            st.code(last_text, language="markdown")
+            st.code(last_text, language="text")
 
         if check_edited:
             edited_text = str(st.session_state.get(KEYS["copy_text"], "") or "").strip()
