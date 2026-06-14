@@ -787,8 +787,13 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
             body = str(st.session_state.get(KEYS["check_text_saved"], "") or "")
             if body:
                 st.markdown("**直す場所がわかる本文**")
-                body_html = _escape_and_mark(body, matched_texts)
-                st.markdown(body_html, unsafe_allow_html=True)
+                st.text_area(
+                    "本文の確認欄",
+                    value=body,
+                    height=260,
+                    disabled=True,
+                    key="quality_body_preview_box",
+                )
 
             if matched_texts:
                 st.markdown("**直した方がよい言葉**")
