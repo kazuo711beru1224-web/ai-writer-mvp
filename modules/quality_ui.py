@@ -787,12 +787,25 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
             body = str(st.session_state.get(KEYS["check_text_saved"], "") or "")
             if body:
                 st.markdown("**直す場所がわかる本文**")
-                st.text_area(
-                    "本文の確認欄",
-                    value=body,
-                    height=260,
-                    disabled=True,
-                    key="quality_body_preview_box",
+                safe_body = html.escape(body)
+                st.markdown(
+                    f"""
+<div style="
+    border: 1px solid rgba(250, 250, 250, 0.35);
+    border-radius: 8px;
+    padding: 14px 16px;
+    background-color: rgba(255, 255, 255, 0.04);
+    color: rgba(250, 250, 250, 0.92);
+    font-size: 15px;
+    line-height: 1.8;
+    white-space: pre-wrap;
+    max-height: 320px;
+    overflow-y: auto;
+">
+{safe_body}
+</div>
+""",
+                    unsafe_allow_html=True,
                 )
 
             if matched_texts:
