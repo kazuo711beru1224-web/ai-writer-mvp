@@ -788,6 +788,20 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
             if body:
                 st.markdown("**直す場所がわかる本文**")
                 safe_body = html.escape(body)
+                marker_words = [
+                    "重要です",
+                    "必要です",
+                    "することができます",
+                    "求められます",
+                    "これにより",
+                ]
+                for word in marker_words:
+                    escaped_word = html.escape(word)
+                    safe_body = safe_body.replace(
+                        escaped_word,
+                        f'<mark style="background-color: #fff176; color: #111; padding: 0 3px; border-radius: 3px;">{escaped_word}</mark>'
+                    )
+
                 st.markdown(
                     f"""
 <div style="
