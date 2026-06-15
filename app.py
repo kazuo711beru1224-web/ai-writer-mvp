@@ -14,6 +14,7 @@ import streamlit as st
 from modules.article_ui import render_article_ui
 from modules.home_ui import render_home_ui
 from modules.quality_ui import render_quality_ui
+from modules.official_procedure_ui import render_official_procedure_ui
 
 try:
     from modules.history_ui import render_history_ui
@@ -44,6 +45,7 @@ BACKUP_SUFFIX = ".json"
 MENU_HOME = "ホーム"
 MENU_ARTICLE = "記事モード（SEOライティング）"
 MENU_CHECK = "文章チェック（手動入力）"
+MENU_OFFICIAL = "公式手続きナビ（登記・役所・税金）"
 MENU_HISTORY = "生成履歴"
 MENU_TERMS = "利用規約"
 MENU_CONSENT = "同意履歴（管理）"
@@ -52,6 +54,7 @@ MENU_OPTIONS = [
     MENU_HOME,
     MENU_ARTICLE,
     MENU_CHECK,
+    MENU_OFFICIAL,
     MENU_HISTORY,
     MENU_TERMS,
 ]
@@ -709,6 +712,10 @@ def _render_current_page(menu: str) -> None:
 
     if menu == MENU_CHECK:
         _call_ui(render_quality_ui, **common_kwargs)
+        return
+
+    if menu == MENU_OFFICIAL:
+        _call_ui(render_official_procedure_ui, **common_kwargs)
         return
 
     if menu == MENU_HISTORY:
