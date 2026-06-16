@@ -198,9 +198,45 @@ def render_official_procedure_ui(
         st.write("5. 年金事務所")
         st.write("6. その他の公的機関")
 
+        st.markdown("#### 検索語候補")
+        st.caption("正式な書類名が分からなくても、手続きの内容や分かっている言葉から検索候補を作ります。")
+
+        base_words = []
+        if procedure_type:
+            base_words.append(procedure_type)
+        if current_situation:
+            base_words.append(current_situation)
+        if question:
+            base_words.append(question)
+        if jurisdiction:
+            base_words.append(jurisdiction)
+        if known_docs:
+            base_words.append(known_docs)
+
+        if base_words:
+            joined_words = " ".join(base_words)
+            search_candidates = [
+                f"{joined_words} 公式",
+                f"{joined_words} 申請書",
+                f"{joined_words} 必要書類",
+                f"{joined_words} 管轄 窓口",
+                f"{joined_words} 費用",
+            ]
+        else:
+            search_candidates = [
+                "手続き名 公式",
+                "手続き名 申請書",
+                "手続き名 必要書類",
+                "手続き名 管轄 窓口",
+                "手続き名 費用",
+            ]
+
+        for i, candidate in enumerate(search_candidates, start=1):
+            st.write(f"{i}. {candidate}")
+
         st.caption(
             "この段階では、まだ検索は実行しません。"
-            "次の段階で、上の材料をもとに公式ページ候補を整理します。"
+            "次の段階で、上の検索語候補をもとに公式ページ候補を整理します。"
         )
 
     st.divider()
