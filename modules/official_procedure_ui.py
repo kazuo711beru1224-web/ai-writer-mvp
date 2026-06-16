@@ -252,7 +252,21 @@ def render_official_procedure_ui(
 
     st.divider()
 
-    st.markdown("### 10. 出力予定")
+    st.markdown("### 10. 確認ルール")
+    st.warning(
+        "公式手続きは、AIの回答だけで進めないでください。"
+        "必ず公式サイト、管轄窓口、または専門家に確認してください。"
+    )
+
+    st.write("1. AIの回答だけで申請・登記・届出を進めない")
+    st.write("2. URLは必ず公式サイトを開いて確認する")
+    st.write("3. 書類名・費用・提出先は、管轄窓口で最終確認する")
+    st.write("4. AIが断定できないことは「未確認」として扱う")
+    st.write("5. 判断に迷う場合は、専門家または管轄窓口へ相談する")
+
+    st.divider()
+
+    st.markdown("### 11. 出力予定")
     st.write("1. この手続きは何か")
     st.write("2. 探すべき書類名・帳票名")
     st.write("3. 一次情報URL")
