@@ -104,6 +104,40 @@ def render_official_procedure_ui(
 
     st.divider()
 
+    current_situation = str(st.session_state.get("official__current_situation", "") or "").strip()
+    question = str(st.session_state.get("official__question", "") or "").strip()
+    jurisdiction = str(st.session_state.get("official__jurisdiction", "") or "").strip()
+    procedure_type = str(st.session_state.get("official__procedure_type", "") or "").strip()
+    official_url = str(st.session_state.get("official__official_url", "") or "").strip()
+    known_docs = str(st.session_state.get("official__known_docs", "") or "").strip()
+
+    st.markdown("### 入力内容の確認")
+    st.caption("ここでは、今入力した内容を確認します。まだAI生成や自動判定は行いません。")
+
+    with st.expander("入力した内容を見る", expanded=True):
+        st.markdown("**1. 今の状況**")
+        st.write(current_situation if current_situation else "未入力です。")
+
+        st.markdown("**2. 知りたいこと**")
+        st.write(question if question else "未入力です。")
+
+        st.markdown("**3. 地域・管轄**")
+        st.write(jurisdiction if jurisdiction else "未入力です。")
+
+        st.markdown("**4. 手続きの種類**")
+        st.write(procedure_type if procedure_type else "未選択です。")
+
+        st.markdown("**5. すでに見つけた公式URL**")
+        if official_url:
+            st.write(official_url)
+        else:
+            st.write("未入力です。公式URLが分からない場合は、次の段階で探す候補を整理します。")
+
+        st.markdown("**6. すでに分かっている書類名・検索語**")
+        st.write(known_docs if known_docs else "未入力です。")
+
+    st.divider()
+
     st.markdown("### 出力予定")
     st.write("・この手続きは何か")
     st.write("・探すべき書類名・帳票名")
