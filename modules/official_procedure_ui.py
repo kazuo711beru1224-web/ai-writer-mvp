@@ -166,7 +166,19 @@ def render_official_procedure_ui(
 
     st.divider()
 
-    st.markdown("### 9. 出力予定")
+    st.markdown("### 9. 公式ページ候補を探す")
+    st.caption("正式な書類名や公式URLが分からなくても大丈夫です。ここでは、次の段階で探す準備をします。")
+
+    if st.button("公式ページ候補を探す準備をする", type="primary"):
+        st.info(
+            "次の段階で、手続きの内容・地域・分かっている言葉をもとに、"
+            "公式ページ候補を探します。\n\n"
+            "検索結果は必ず公式サイトを確認してください。"
+        )
+
+    st.divider()
+
+    st.markdown("### 10. 出力予定")
     st.write("1. この手続きは何か")
     st.write("2. 探すべき書類名・帳票名")
     st.write("3. 一次情報URL")
