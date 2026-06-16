@@ -234,6 +234,17 @@ def render_official_procedure_ui(
         for i, candidate in enumerate(search_candidates, start=1):
             st.write(f"{i}. {candidate}")
 
+        st.markdown("#### コピー用検索語")
+        st.caption("下の枠をコピーして、Google検索や公式サイト内検索に貼り付けられます。")
+
+        copy_text = "\n".join(search_candidates)
+        st.text_area(
+            "コピー用",
+            value=copy_text,
+            height=150,
+            key="official_procedure_search_terms_copy",
+        )
+
         st.caption(
             "この段階では、まだ検索は実行しません。"
             "次の段階で、上の検索語候補をもとに公式ページ候補を整理します。"
