@@ -63,7 +63,7 @@ def render_official_procedure_ui(
 
     st.markdown("### 4. 手続きの種類")
     st.caption("分かる範囲で選んでください。迷う場合は「その他」で大丈夫です。")
-    st.selectbox(
+    st.radio(
         "手続きの種類",
         [
             "法人登記",
