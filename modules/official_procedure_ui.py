@@ -138,7 +138,35 @@ def render_official_procedure_ui(
 
     st.divider()
 
-    st.markdown("### 8. 出力予定")
+    st.markdown("### 8. 次に確認すること")
+    st.caption("ここでは、入力内容をもとに、次に確認した方がよい点を整理します。まだAI生成や自動判定は行いません。")
+
+    check_items = []
+
+    if not current_situation:
+        check_items.append("今の状況が未入力です。まず、何をしたいのかを短く書いてください。")
+
+    if not question:
+        check_items.append("知りたいことが未入力です。必要書類、費用、提出先、相談先など、知りたい内容を書いてください。")
+
+    if not jurisdiction:
+        check_items.append("地域・管轄が未入力です。分からなければ空欄でも大丈夫ですが、都道府県や市区町村があると整理しやすくなります。")
+
+    if not official_url:
+        check_items.append("公式URLは未入力です。分からなくても大丈夫です。次の段階で、AIが公式ページの候補を探します。")
+
+    if not known_docs:
+        check_items.append("書類名・検索語が未入力です。分かる言葉だけで大丈夫です。例：変更登記、申請書、代表者変更など。")
+
+    if not check_items:
+        check_items.append("入力内容はそろっています。次の段階で、公式ページ候補や探すべき書類名を整理します。")
+
+    for i, item in enumerate(check_items, start=1):
+        st.write(f"{i}. {item}")
+
+    st.divider()
+
+    st.markdown("### 9. 出力予定")
     st.write("1. この手続きは何か")
     st.write("2. 探すべき書類名・帳票名")
     st.write("3. 一次情報URL")
