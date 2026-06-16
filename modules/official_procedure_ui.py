@@ -176,6 +176,33 @@ def render_official_procedure_ui(
             "検索結果は必ず公式サイトを確認してください。"
         )
 
+        st.markdown("#### 検索に使う材料")
+
+        st.write("1. 手続きの内容")
+        st.write(current_situation if current_situation else "未入力です。何をしたいのかを短く書くと探しやすくなります。")
+
+        st.write("2. 知りたいこと")
+        st.write(question if question else "未入力です。必要書類、費用、提出先などを知りたい場合は書いてください。")
+
+        st.write("3. 地域・管轄")
+        st.write(jurisdiction if jurisdiction else "未入力です。分からなければ空欄で大丈夫です。")
+
+        st.write("4. 分かっている言葉")
+        st.write(known_docs if known_docs else "未入力です。正式な書類名が分からなくても大丈夫です。")
+
+        st.markdown("#### 優先して確認する公式サイト候補")
+        st.write("1. 法務局")
+        st.write("2. 市区町村")
+        st.write("3. 都道府県")
+        st.write("4. 税務署")
+        st.write("5. 年金事務所")
+        st.write("6. その他の公的機関")
+
+        st.caption(
+            "この段階では、まだ検索は実行しません。"
+            "次の段階で、上の材料をもとに公式ページ候補を整理します。"
+        )
+
     st.divider()
 
     st.markdown("### 10. 出力予定")
