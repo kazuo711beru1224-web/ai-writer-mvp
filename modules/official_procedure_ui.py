@@ -80,7 +80,7 @@ def render_official_procedure_ui(
     )
 
     st.markdown("### 5. すでに見つけた公式URL")
-    st.caption("公式ページを見つけている場合はURLを貼ってください。分からなければ空欄で大丈夫です。")
+    st.caption("公式ページを見つけている場合はURLを貼ってください。分からなければ空欄で大丈夫です。次の段階で、AIが公式ページの候補を探します。")
     st.text_input(
         "すでに見つけた公式URL",
         placeholder="例：https://www.moj.go.jp/ または https://houmukyoku.moj.go.jp/",
@@ -131,7 +131,7 @@ def render_official_procedure_ui(
         if official_url:
             st.write(official_url)
         else:
-            st.write("未入力です。公式URLが分からない場合は、次の段階で探す候補を整理します。")
+            st.write("未入力です。公式URLが分からない場合は、空欄で大丈夫です。次の段階で、AIが公式ページの候補を探します。")
 
         st.markdown("**6. すでに分かっている書類名・検索語**")
         st.write(known_docs if known_docs else "未入力です。")
