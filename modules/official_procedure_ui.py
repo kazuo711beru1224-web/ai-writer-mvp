@@ -111,7 +111,7 @@ def render_official_procedure_ui(
     official_url = str(st.session_state.get("official__official_url", "") or "").strip()
     known_docs = str(st.session_state.get("official__known_docs", "") or "").strip()
 
-    st.markdown("### 入力内容の確認")
+    st.markdown("### 7. 入力内容の確認")
     st.caption("ここでは、今入力した内容を確認します。まだAI生成や自動判定は行いません。")
 
     with st.expander("入力した内容を見る", expanded=True):
@@ -138,12 +138,12 @@ def render_official_procedure_ui(
 
     st.divider()
 
-    st.markdown("### 出力予定")
-    st.write("・この手続きは何か")
-    st.write("・探すべき書類名・帳票名")
-    st.write("・一次情報URL")
-    st.write("・提出先")
-    st.write("・費用")
-    st.write("・専門家に相談する場合")
-    st.write("・AIでは断定できないこと")
-    st.write("・次にやること")
+    st.markdown("### 8. 出力予定")
+    st.write("1. この手続きは何か")
+    st.write("2. 探すべき書類名・帳票名")
+    st.write("3. 一次情報URL")
+    st.write("4. 提出先")
+    st.write("5. 費用")
+    st.write("6. 専門家に相談する場合")
+    st.write("7. AIでは断定できないこと")
+    st.write("8. 次にやること")
