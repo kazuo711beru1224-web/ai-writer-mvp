@@ -691,6 +691,16 @@ def _render_sidebar() -> str:
             st.session_state["menu_request"] = chosen
             st.rerun()
 
+        if current_menu == MENU_OFFICIAL:
+            st.divider()
+            st.markdown("### \U0001f9ed \u753b\u9762\u79fb\u52d5\u30b5\u30dd\u30fc\u30c8")
+            st.caption("\u516c\u5f0f\u624b\u7d9a\u304d\u30ca\u30d3\u5185\u306e\u898b\u305f\u3044\u5834\u6240\u3078\u79fb\u52d5\u3067\u304d\u307e\u3059\u3002")
+            st.markdown("- [\u3053\u306e\u753b\u9762\u306e\u5148\u982d\u3078](#official-procedure-top)")
+            st.markdown("- [1. \u4eca\u306e\u72b6\u6cc1\u3078](#official-procedure-current)")
+            st.markdown("- [9. \u516c\u5f0f\u30da\u30fc\u30b8\u5019\u88dc\u3078](#official-procedure-search)")
+            st.markdown("- [AI\u6574\u7406\u7528\u4e0b\u66f8\u304d\u3078](#official-procedure-ai-draft)")
+            st.markdown("- [10. \u78ba\u8a8d\u30eb\u30fc\u30eb\u3078](#official-procedure-rules)")
+
     return str(st.session_state.get("app__menu") or MENU_HOME)
 
 

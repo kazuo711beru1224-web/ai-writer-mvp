@@ -11,6 +11,7 @@ def render_official_procedure_ui(
 ) -> None:
     """公式手続きナビの空画面。まだAI生成は行わない。"""
 
+    st.markdown('<div id="official-procedure-top" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("## 公式手続きナビ（登記・役所・税金）")
     st.write("登記、役所、税金、補助金、法人手続きなど、間違えると困る手続きを整理するための画面です。")
     st.write("この画面では、AIが勝手に断定せず、一次情報・正式な書類名・確認先を分けて表示していきます。")
@@ -25,6 +26,7 @@ def render_official_procedure_ui(
 
     st.info("現在は入力欄だけを追加しています。AI生成や自動判定はまだ行いません。")
 
+    st.markdown('<div id="official-procedure-current" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("### 1. 今の状況")
     st.caption("現在の状況を書いてください。実名や個人情報は、必要がなければ入れないでください。")
     st.text_area(
@@ -166,6 +168,7 @@ def render_official_procedure_ui(
 
     st.divider()
 
+    st.markdown('<div id="official-procedure-search" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("### 9. 公式ページ候補を探す")
     st.caption("正式な書類名や公式URLが分からなくても大丈夫です。ここでは、次の段階で探す準備をします。")
 
@@ -256,6 +259,7 @@ def render_official_procedure_ui(
             "次の段階で、上の検索語候補をもとに公式ページ候補を整理します。"
         )
 
+        st.markdown('<div id="official-procedure-ai-draft" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
         st.markdown("#### AI整理用の下書き")
         st.caption(
             "次の段階でAIに整理させるための下書きです。"
@@ -314,6 +318,7 @@ def render_official_procedure_ui(
 
     st.divider()
 
+    st.markdown('<div id="official-procedure-rules" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("### 10. 確認ルール")
     st.warning(
         "公式手続きは、AIの回答だけで進めないでください。"
