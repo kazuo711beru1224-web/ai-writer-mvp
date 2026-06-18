@@ -169,7 +169,13 @@ def render_official_procedure_ui(
     st.markdown("### 9. 公式ページ候補を探す")
     st.caption("正式な書類名や公式URLが分からなくても大丈夫です。ここでは、次の段階で探す準備をします。")
 
+    if "official_procedure_show_search_panel" not in st.session_state:
+        st.session_state["official_procedure_show_search_panel"] = False
+
     if st.button("公式ページ候補を探す準備をする", type="primary"):
+        st.session_state["official_procedure_show_search_panel"] = True
+
+    if st.session_state.get("official_procedure_show_search_panel"):
         st.info(
             "次の段階で、手続きの内容・地域・分かっている言葉をもとに、"
             "公式ページ候補を探します。\n\n"
@@ -248,6 +254,62 @@ def render_official_procedure_ui(
         st.caption(
             "この段階では、まだ検索は実行しません。"
             "次の段階で、上の検索語候補をもとに公式ページ候補を整理します。"
+        )
+
+        st.markdown("#### AI整理用の下書き")
+        st.caption(
+            "次の段階でAIに整理させるための下書きです。"
+            "URLや書類名は、まだ確定情報として扱いません。"
+        )
+
+        draft_lines = [
+            "【目的】",
+            "公式手続きに関する情報を、一次情報確認前の候補として整理する。",
+            "",
+            "【手続きの種類】",
+            procedure_type if procedure_type else "未入力",
+            "",
+            "【今の状況】",
+            current_situation if current_situation else "未入力",
+            "",
+            "【知りたいこと】",
+            question if question else "未入力",
+            "",
+            "【地域・管轄】",
+            jurisdiction if jurisdiction else "未入力",
+            "",
+            "【分かっている書類名・検索語】",
+            known_docs if known_docs else "未入力",
+            "",
+            "【検索語候補】",
+        ]
+
+        draft_lines.extend([f"- {candidate}" for candidate in search_candidates])
+
+        draft_lines.extend([
+            "",
+            "【確認ルール】",
+            "- AIの回答だけで申請・登記・届出を進めない。",
+            "- URLは必ず公式サイトを開いて確認する。",
+            "- 書類名・費用・提出先は、管轄窓口で最終確認する。",
+            "- AIが断定できないことは「未確認」として扱う。",
+            "- 判断に迷う場合は、専門家または管轄窓口へ相談する。",
+            "",
+            "【AIに期待する整理】",
+            "- この手続きが何に当たるかを候補として整理する。",
+            "- 探すべき書類名・帳票名を候補として整理する。",
+            "- 一次情報として確認すべき公式サイトの種類を整理する。",
+            "- 提出先、費用、相談先を確認項目として整理する。",
+            "- 不明点や断定できない点を「未確認」として分ける。",
+        ])
+
+        draft_text = "\n".join(draft_lines)
+
+        st.text_area(
+            "AI整理用下書き",
+            value=draft_text,
+            height=360,
+            key="official_procedure_ai_draft",
         )
 
     st.divider()
