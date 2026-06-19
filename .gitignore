@@ -219,3 +219,6 @@ __marimo__/
 
 # Application logs (user state) — not safe to commit
 logs/
+
+# Application outputs (generated articles) - not safe to commit
+outputs/
