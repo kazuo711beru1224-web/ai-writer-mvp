@@ -2166,6 +2166,7 @@ def render_article_ui(
         if level == "RISK":
             st.warning("AIが作った下書きには確認したい点があります。下の本文欄で直してから、もう一度AI確認をすると安全です。")
 
+        st.markdown('<div id="article-edit-text" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
         st.markdown("### ✍ 公開前に自分で直す本文")
         st.caption("この欄で文章を直せます。編集前の本文を残したい場合は、先にWordなどへコピーして保管してください。")
         st.caption("直したあとは『この文章をAIに確認してもらう』で、気になる箇所をもう一度確認できます。")
@@ -2184,6 +2185,7 @@ def render_article_ui(
 
         st.text_area("公開前に自分で直す本文", key=KEYS["copy_text"], height=420)
 
+        st.markdown('<div id="article-actions" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
         action_col1, action_col2 = st.columns([1, 1])
         with action_col1:
             check_edited = st.button(
@@ -2204,6 +2206,7 @@ def render_article_ui(
             st.caption("見比べたいときだけ開いてください。通常は上の本文欄だけで進められます。")
             st.code(last_text, language="text")
 
+        st.markdown('<div id="article-edited-result" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
         if check_edited:
             edited_text = str(st.session_state.get(KEYS["copy_text"], "") or "").strip()
             if _is_blank(edited_text):

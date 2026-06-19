@@ -710,8 +710,9 @@ def _render_sidebar() -> str:
             st.markdown("- [1. \u4eca\u306e\u72b6\u6cc1\u3078](#article-current)")
             st.markdown("- [2. \u77e5\u308a\u305f\u3044\u3053\u3068\u3078](#article-question)")
             st.markdown("- [3. \u691c\u7d22\u30ad\u30fc\u30ef\u30fc\u30c9\u3078](#article-keyword)")
-            st.markdown("- [\u751f\u6210\u3055\u308c\u305f\u8a18\u4e8b\u3078](#article-generated)")
-            st.markdown("- [\u516c\u958b\u524d\u306e\u78ba\u8a8d\u3078](#article-final-check)")
+            st.markdown("- [\u516c\u958b\u524d\u306b\u76f4\u3059\u672c\u6587\u3078](#article-edit-text)")
+            st.markdown("- [AI\u78ba\u8a8d\u30fb\u4fdd\u5b58\u30dc\u30bf\u30f3\u3078](#article-actions)")
+            st.markdown("- [\u7de8\u96c6\u5f8c\u306e\u78ba\u8a8d\u7d50\u679c\u3078](#article-edited-result)")
 
 
         if current_menu == MENU_CHECK:
