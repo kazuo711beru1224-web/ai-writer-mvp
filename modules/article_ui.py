@@ -1769,6 +1769,7 @@ def _effective_guardrail_evidence() -> tuple[str, bool]:
 def _render_guardrail_meter(*, body_text: str, evidence_text: str) -> str:
     res = evaluate_guardrails(body_text=body_text, evidence_text=evidence_text, root_mode=True)
 
+    st.markdown('<div id="article-final-check" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("### 公開前の確認")
     badge = {"SAFE": "✅ SAFE", "CAUTION": "⚠️ CAUTION", "RISK": "🛑 RISK"}[res.level]
     st.write(badge)
@@ -1850,9 +1851,11 @@ def _save_article_file(*, outputs_dir: str, body_text: str) -> tuple[bool, str]:
 
 
 def _render_standard_inputs() -> None:
+    st.markdown('<div id="article-top" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("## 📝 かんたん記事作成")
     st.write("まずは3つだけで大丈夫です。細かい設定はあとから確認できます。")
 
+    st.markdown('<div id="article-current" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("### 1. 今の状況")
     st.text_area(
         "困っていることや背景を書いてください",
@@ -1861,6 +1864,7 @@ def _render_standard_inputs() -> None:
     )
     st.caption("例：63歳会社員。給与28万円と賞与があり、年金がどう変わるか知りたい。")
 
+    st.markdown('<div id="article-question" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("### 2. 知りたいこと")
     st.text_area(
         "何を知りたいか、どう判断したいかを書いてください",
@@ -1869,6 +1873,7 @@ def _render_standard_inputs() -> None:
     )
     st.caption("例：給与と賞与はどう合算されるか。今の基準額は何か。")
 
+    st.markdown('<div id="article-keyword" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("### 3. 検索キーワード（任意）")
     st.caption("思いつく言葉があれば、2〜5個くらい入れてください。空でも進められます。")
     st.text_input(
@@ -2134,6 +2139,7 @@ def render_article_ui(
                 st.code(str(getattr(e, "detail", "") or str(e)), language="text")
 
     st.divider()
+    st.markdown('<div id="article-generated" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("### 📄 生成された記事")
     last_text = str(st.session_state.get(KEYS["last_text"], "") or "")
 
