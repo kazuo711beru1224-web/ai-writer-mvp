@@ -426,43 +426,58 @@ def _render_article_file_card(path: Path, idx: int) -> None:
     mtime_text = _fmt_mtime(stat.st_mtime)
     title = _friendly_article_title(path)
 
-    with st.expander(f"📄 {title}｜{mtime_text}｜{_fmt_size(stat.st_size)}", expanded=False):
-        st.write("作成して保存した記事を確認できます。公開前の見直しや保管に使えます。")
+    with st.expander(f"\U0001f4c4 {title}\uff5c{mtime_text}\uff5c{_fmt_size(stat.st_size)}", expanded=False):
+        st.write("\u4f5c\u6210\u3057\u3066\u4fdd\u5b58\u3057\u305f\u8a18\u4e8b\u3092\u78ba\u8a8d\u3067\u304d\u307e\u3059\u3002\u516c\u958b\u524d\u306e\u898b\u76f4\u3057\u3084\u4fdd\u7ba1\u306b\u4f7f\u3048\u307e\u3059\u3002")
+
+        text_content = None
 
         if _is_text_viewable(path):
             content = _read_text_safe(path)
-            st.markdown("**記事内容**")
+            text_content = content
+            st.markdown("**\u8a18\u4e8b\u5185\u5bb9**")
             st.code(_preview_text(content), language="markdown" if path.suffix.lower() == ".md" else "text")
+            st.caption("\u30b9\u30de\u30db\u3084Google\u30c9\u30e9\u30a4\u30d6\u3067\u958b\u304d\u305f\u3044\u5834\u5408\u306f\u3001\u4e0b\u306e\u300e\u30b9\u30de\u30db\u7528TXT\u3067\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9\u300f\u304c\u304a\u3059\u3059\u3081\u3067\u3059\u3002")
         else:
-            st.info("この形式は画面で表示できません。必要な場合はダウンロードして確認してください。")
+            st.info("\u3053\u306e\u5f62\u5f0f\u306f\u753b\u9762\u3067\u8868\u793a\u3067\u304d\u307e\u305b\u3093\u3002\u5fc5\u8981\u306a\u5834\u5408\u306f\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9\u3057\u3066\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002")
 
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
 
         with c1:
             data = _read_bytes_safe(path)
             if data:
                 st.download_button(
-                    "ダウンロード",
+                    "\u5143\u306e\u5f62\u5f0f\u3067\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9",
                     data=data,
                     file_name=path.name,
-                    mime="application/octet-stream",
+                    mime="text/markdown" if path.suffix.lower() == ".md" else "application/octet-stream",
                     key=f"history_download_article_{idx}",
                     use_container_width=True,
                 )
             else:
-                st.warning("ダウンロードの準備に失敗しました。")
+                st.warning("\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9\u306e\u6e96\u5099\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002")
 
         with c2:
-            if st.button("削除する", key=f"history_delete_article_{idx}", use_container_width=True):
+            if text_content:
+                txt_name = path.with_suffix(".txt").name
+                st.download_button(
+                    "\u30b9\u30de\u30db\u7528TXT\u3067\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9",
+                    data=text_content.encode("utf-8-sig"),
+                    file_name=txt_name,
+                    mime="text/plain",
+                    key=f"history_download_article_txt_{idx}",
+                    use_container_width=True,
+                )
+
+        with c3:
+            if st.button("\u524a\u9664\u3059\u308b", key=f"history_delete_article_{idx}", use_container_width=True):
                 _begin_delete_confirm(
                     kind="article",
                     target=path.name,
-                    label=f"記事「{title}」",
+                    label=f"\u8a18\u4e8b\u300c{title}\u300d",
                     mtime_text=mtime_text,
                     seen_mtime_text=mtime_text,
                 )
                 st.rerun()
-
 
 def _render_state_file_card(path: Path, idx: int) -> None:
     stat = path.stat()
