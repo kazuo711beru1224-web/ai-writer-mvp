@@ -713,6 +713,16 @@ def _render_sidebar() -> str:
             st.markdown("- [\u751f\u6210\u3055\u308c\u305f\u8a18\u4e8b\u3078](#article-generated)")
             st.markdown("- [\u516c\u958b\u524d\u306e\u78ba\u8a8d\u3078](#article-final-check)")
 
+
+        if current_menu == MENU_CHECK:
+            st.divider()
+            st.markdown("### \U0001f9ed \u753b\u9762\u79fb\u52d5\u30b5\u30dd\u30fc\u30c8")
+            st.caption("\u6587\u7ae0\u30c1\u30a7\u30c3\u30af\u30e2\u30fc\u30c9\u5185\u306e\u898b\u305f\u3044\u5834\u6240\u3078\u79fb\u52d5\u3067\u304d\u307e\u3059\u3002")
+            st.markdown("- [\u3053\u306e\u753b\u9762\u306e\u5148\u982d\u3078](#quality-top)")
+            st.markdown("- [\u78ba\u8a8d\u3057\u305f\u3044\u6587\u7ae0\u3078](#quality-text)")
+            st.markdown("- [\u78ba\u8a8d\u306e\u9053\u3057\u308b\u3079\u3078](#quality-guide)")
+            st.markdown("- [\u6839\u62e0\u30e1\u30e2\u30fb\u691c\u7d22\u8a9e\u3078](#quality-evidence)")
+
     return str(st.session_state.get("app__menu") or MENU_HOME)
 
 

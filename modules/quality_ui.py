@@ -928,6 +928,7 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
     _ = kwargs
     _ensure_state()
 
+    st.markdown('<div id="quality-top" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("## 文章チェック（手動入力）")
     st.write("ここでは、公開前に気になる点を確認できます。")
     st.write("どこを見直すと安心かを、下に分かりやすく表示します。")
@@ -959,6 +960,7 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
 
     st.divider()
 
+    st.markdown('<div id="quality-text" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("### 確認したい文章")
     st.caption("公開前に見直したい本文をここへ入れてください。")
     st.caption("例：記事モードで作った下書き / 外部で整えた本文 / 公開前の最終稿")
@@ -979,6 +981,7 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
 
     st.divider()
 
+    st.markdown('<div id="quality-guide" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("### 🔎 確認の道しるべ")
     st.write("ここでは、記事モードで入れた根拠メモや関連語を確認できます。")
     st.write("本文にない数字、言い過ぎ、根拠のない断定がないかを見直してください。")
@@ -994,6 +997,7 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
     if not memo.strip():
         memo = _resolve_article_memo()
 
+    st.markdown('<div id="quality-evidence" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("**根拠メモ（参考URL / 資料名 / 大事な数字）**")
     if evidence.strip():
         st.write(evidence)
