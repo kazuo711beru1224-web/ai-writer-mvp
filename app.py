@@ -721,7 +721,8 @@ def _render_sidebar() -> str:
             st.markdown("- [\u3053\u306e\u753b\u9762\u306e\u5148\u982d\u3078](#quality-top)")
             st.markdown("- [\u78ba\u8a8d\u3057\u305f\u3044\u6587\u7ae0\u3078](#quality-text)")
             st.markdown("- [\u78ba\u8a8d\u306e\u9053\u3057\u308b\u3079\u3078](#quality-guide)")
-            st.markdown("- [\u6839\u62e0\u30e1\u30e2\u30fb\u691c\u7d22\u8a9e\u3078](#quality-evidence)")
+            st.markdown("- [\u8868\u8a18\u30fb\u8a00\u3044\u56de\u3057\u306e\u78ba\u8a8d\u3078](#quality-wording)")
+            st.markdown("- [\u76f4\u3059\u5834\u6240\u304c\u308f\u304b\u308b\u672c\u6587\u3078](#quality-fix-place)")
 
     return str(st.session_state.get("app__menu") or MENU_HOME)
 

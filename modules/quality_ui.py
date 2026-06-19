@@ -747,6 +747,8 @@ def _render_badge(title: str, level: str) -> None:
         "CAUTION": "⚠️ CAUTION",
         "RISK": "🛑 RISK",
     }
+    if title == "\u8868\u8a18\u30fb\u8a00\u3044\u56de\u3057\u306e\u78ba\u8a8d":
+        st.markdown('<div id="quality-wording" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown(f"### {title}")
     st.write(badge_map.get(level or "", "（未診断）"))
 
@@ -786,7 +788,8 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
         if code == "便利表現チェック":
             body = str(st.session_state.get(KEYS["check_text_saved"], "") or "")
             if body:
-                st.markdown("**直す場所がわかる本文**")
+                st.markdown('<div id="quality-fix-place" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
+                st.markdown("#### \u76f4\u3059\u5834\u6240\u304c\u308f\u304b\u308b\u672c\u6587")
                 safe_body = html.escape(body)
                 marker_words = [
                     "重要です",
