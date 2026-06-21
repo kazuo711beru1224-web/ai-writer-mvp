@@ -808,11 +808,11 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
                 st.markdown(
                     f"""
 <div style="
-    border: 1px solid rgba(250, 250, 250, 0.35);
+    border: 1px solid #cbd5e1;
     border-radius: 8px;
     padding: 14px 16px;
-    background-color: rgba(255, 255, 255, 0.04);
-    color: rgba(250, 250, 250, 0.92);
+    background-color: #ffffff;
+    color: #111827;
     font-size: 15px;
     line-height: 1.8;
     white-space: pre-wrap;
