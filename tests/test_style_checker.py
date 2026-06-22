@@ -1,7 +1,7 @@
 from modules.style_checker import _check_convenient_phrases
 
 
-def test_check_convenient_phrases_detects_expected_terms():
+def test_check_convenient_phrases_reports_remaining_sentence_only():
     text = (
         "商品の特徴を確認することは重要です。\n"
         "この部分は必要です。\n"
@@ -13,4 +13,5 @@ def test_check_convenient_phrases_detects_expected_terms():
     assert len(findings) == 1
     finding = findings[0]
     assert finding.code == "便利表現チェック"
-    assert set(finding.samples) >= {"重要です", "必要です", "可能になります"}
+    assert len(finding.samples) == 1
+    assert finding.samples[0].endswith("\u53ef\u80fd\u306b\u306a\u308a\u307e\u3059\u3002")

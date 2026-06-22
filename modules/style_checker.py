@@ -386,8 +386,6 @@ def _check_convenient_phrases(text: str) -> List[Finding]:
     # AIっぽく見える便利表現
     convenient_phrases = (
         "これにより",
-        "重要です",
-        "必要です",
         "可能になります",
         "することができます",
         "と言えるでしょう",
@@ -396,9 +394,11 @@ def _check_convenient_phrases(text: str) -> List[Finding]:
     )
 
     found: List[str] = []
-    for phrase in convenient_phrases:
-        if phrase in text:
-            found.append(phrase)
+    for sentence in _split_sentences(text):
+        if any(phrase in sentence for phrase in convenient_phrases):
+            sample = _trim_sample(sentence)
+            if sample not in found:
+                found.append(sample)
 
     if found:
         findings.append(

@@ -376,15 +376,13 @@ def _serialize_guardrail_payload(res) -> str:
             matched_texts=matched_texts,
         )
 
-        if diag.get("headline") == "公開前に確認したい点があります。":
-            diag.update({
-                "headline": "公開前に見直したい表現があります。",
-                "lead": "本文の中に、少し強く聞こえる言葉があります。根拠と照らし合わせて、このまま使ってよいか確認してください。",
-                "issue_label": "見直したい言葉",
-                "issue_text": "",
-                "reason_text": "根拠が弱いまま断定すると、読者に誤解を与えることがあります。",
-                "fix_text": "一次情報や根拠メモと見比べて、言い切ってよい表現か確認してください。",
-            })
+        level = str(getattr(f, "level", "") or "")
+        if level != "RISK" and (
+            not matched_texts
+            or not str(diag.get("reason_text", "")).strip()
+            or not str(diag.get("fix_text", "")).strip()
+        ):
+            continue
 
         rewrite_example = ""
 
@@ -787,23 +785,13 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
 
         if code == "便利表現チェック":
             body = str(st.session_state.get(KEYS["check_text_saved"], "") or "")
-            if body:
+            if body and matched_texts:
                 st.markdown('<div id="quality-fix-place" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
                 st.markdown("#### \u76f4\u3059\u5834\u6240\u304c\u308f\u304b\u308b\u672c\u6587")
-                safe_body = html.escape(body)
-                marker_words = [
-                    "重要です",
-                    "必要です",
-                    "することができます",
-                    "求められます",
-                    "これにより",
-                ]
-                for word in marker_words:
-                    escaped_word = html.escape(word)
-                    safe_body = safe_body.replace(
-                        escaped_word,
-                        f'<mark style="background-color: #fff176; color: #111; padding: 0 3px; border-radius: 3px;">{escaped_word}</mark>'
-                    )
+                safe_body = _escape_and_mark(
+                    body,
+                    [str(text) for text in matched_texts if str(text).strip()],
+                )
 
                 st.markdown(
                     f"""
@@ -838,7 +826,7 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
                 st.markdown("**直し方**")
                 st.write(fix_text)
 
-            if body:
+            if body and matched_texts:
                 # 汎用的な修正の考え方を提示
                 st.markdown("**修正の考え方**")
                 st.write("この文章は、言葉を置き換えるだけでは自然になりません。")
@@ -1104,9 +1092,6 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
     if diag_items:
         _render_buyer_diagnosis_blocks(diag_items)
 
-    if diag_lines:
-        with st.expander("見直しのくわしい内容", expanded=(level in ("CAUTION", "RISK"))):
-            st.code(diag_lines, language="text")
 
     # -------------------------
     # B. 表記・言い回しチェック
@@ -1126,9 +1111,3 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
 
         if style_items:
             _render_buyer_diagnosis_blocks(style_items)
-
-        if style_lines:
-            with st.expander("表記・言い回しの見直し", expanded=False):
-                st.code(style_lines, language="text")
-
-
