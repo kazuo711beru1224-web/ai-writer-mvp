@@ -240,6 +240,36 @@ DIAGNOSIS_RULES: Dict[str, Dict[str, Any]] = {
         ),
         "example_labels": [],
     },
+
+    "\u6700\u65b0\u60c5\u5831\u306f\u6700\u7d42\u78ba\u8a8d\u524d\u63d0": {
+        "rank": "CAUTION",
+        "buyer_conclusion": "\u516c\u958b\u524d\u306b\u3001\u60c5\u5831\u306e\u66f4\u65b0\u6642\u70b9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+        "issue_label": "\u53c2\u7167\u65e5\u30fb\u767a\u8868\u5143\u30fb\u78ba\u8a8d\u5148",
+        "issue_template": "\u672c\u6587\u3067\u6700\u65b0\u306e\u51fa\u6765\u4e8b\u3084\u6642\u4e8b\u6027\u306e\u3042\u308b\u5185\u5bb9\u3092\u6271\u3063\u3066\u3044\u307e\u3059\u3002",
+        "reason_template": "\u6700\u65b0\u60c5\u5831\u306f\u3001\u8ffd\u52a0\u306e\u767a\u8868\u3084\u8a02\u6b63\u3067\u5185\u5bb9\u304c\u5909\u308f\u308b\u3053\u3068\u304c\u3042\u308a\u307e\u3059\u3002",
+        "fix_template": "\u53c2\u7167\u65e5\u3068\u767a\u8868\u5143\u3092\u78ba\u8a8d\u3057\u3001\u516c\u5f0f\u60c5\u5831\u3068\u4fe1\u983c\u3067\u304d\u308b\u5831\u9053\u306a\u3069\u3001\u8907\u6570\u306e\u78ba\u8a8d\u5148\u3067\u7167\u5408\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+        "example_labels": [],
+    },
+
+    "根拠式との不一致": {
+        "rank": "RISK",
+        "buyer_conclusion": "一次情報の計算式と違う可能性があります。公開前に修正してください。",
+        "issue_label": "計算式",
+        "issue_template": "本文の計算方法が、根拠欄の公式計算式と一致していません。",
+        "reason_template": "計算式の違いは、受給額や判定結果に影響することがあります。",
+        "fix_template": "本文の計算式を、根拠欄の公式の表現と一致させてください。",
+        "example_labels": [],
+    },
+
+    "重要主張の照合未完了": {
+        "rank": "CAUTION",
+        "buyer_conclusion": "一次情報との照合がまだ完了していません。",
+        "issue_label": "重要主張の最終確認",
+        "issue_template": "制度・法律・医療・金融の数字や計算の説明があります。",
+        "reason_template": "現在の自動確認は、重要主張を一つずつ公式の条件・例外・計算式と照合する段階までは実装されていません。",
+        "fix_template": "公式の原文で、対象者・数字・計算式・期限・例外を確認してから、公開するか判断してください。",
+        "example_labels": [],
+    },
 }
 
 

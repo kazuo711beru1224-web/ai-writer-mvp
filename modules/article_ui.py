@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Dict, Set, List, Tuple, Any
 from pathlib import Path
@@ -1727,33 +1727,47 @@ def _strip_outer_code_fence(text: str) -> str:
 
 def _render_buyer_diagnosis_blocks(res: Any) -> None:
     findings = getattr(res, "findings", None) or []
-    if not findings:
-        return
+    important_without_quote = {
+        "最新情報は最終確認前提",
+        "重要主張の照合未完了",
+    }
 
     for f in findings:
         rule_key = str(getattr(f, "code", "") or "")
         samples = getattr(f, "samples", None) or []
         matched_texts = [str(x) for x in samples if str(x).strip()]
-
         diag = build_buyer_diagnosis(rule_key=rule_key, matched_texts=matched_texts)
 
+        is_generic = (
+            diag.get("issue_label") == "\u78ba\u8a8d\u3057\u305f\u3044\u7b87\u6240"
+            and diag.get("issue_text") == "\u672c\u6587\u306e\u8868\u73fe\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+        )
+        is_risk = str(getattr(f, "level", "") or "") == "RISK"
+        has_guidance = bool(
+            str(diag.get("reason_text", "")).strip()
+            and str(diag.get("fix_text", "")).strip()
+        )
+
+        if is_generic or not has_guidance:
+            continue
+        if not matched_texts and not is_risk and rule_key not in important_without_quote:
+            continue
+
         st.markdown("---")
-        st.markdown(f"**{diag['headline']}**")
-        st.write(diag["lead"])
-        st.markdown("**確認したい箇所**")
-        st.write(f"・{diag['issue_label']}")
-        st.write(diag["issue_text"])
 
-        if diag["matched_texts"]:
-            st.markdown("**本文の該当箇所**")
-            for t in diag["matched_texts"]:
-                st.markdown(f"- {t}")
+        if matched_texts:
+            st.markdown("**\u554f\u984c\u306e\u6587\u7ae0**")
+            for item in matched_texts:
+                st.markdown(f"- {item}")
+        else:
+            st.markdown("**\u78ba\u8a8d\u3059\u308b\u3053\u3068**")
+            st.write(str(diag.get("issue_text", "") or ""))
 
-        st.markdown("**理由**")
-        st.write(diag["reason_text"])
-        st.markdown("**直し方**")
-        st.write(diag["fix_text"])
+        st.markdown("**\u306a\u305c\u78ba\u8a8d\u3059\u308b\u306e\u304b**")
+        st.write(str(diag.get("reason_text", "") or ""))
 
+        st.markdown("**\u3069\u3046\u76f4\u3059\u306e\u304b**")
+        st.write(str(diag.get("fix_text", "") or ""))
 
 def _effective_guardrail_evidence() -> tuple[str, bool]:
     proof_ev = str(st.session_state.get(KEYS["proof_evidence"], "") or "").strip()
@@ -1782,14 +1796,6 @@ def _render_guardrail_meter(*, body_text: str, evidence_text: str) -> str:
         st.success("大きな問題は見つかっていません。公開前の最終確認がしやすい状態です。")
 
     _render_buyer_diagnosis_blocks(res)
-
-    if getattr(res, "findings", None):
-        with st.expander("見直しのくわしい内容", expanded=(res.level != "SAFE")):
-            for f in res.findings:
-                st.write(f"- **{f.level} / {f.code}**：{f.message}")
-                samples = getattr(f, "samples", None)
-                if samples:
-                    st.caption("例：" + " / ".join(samples))
 
     return res.level
 

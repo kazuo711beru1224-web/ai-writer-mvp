@@ -1,4 +1,4 @@
-# Byte-compiled / optimized / DLL files
+﻿# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
 *$py.class
@@ -222,3 +222,6 @@ logs/
 
 # Application outputs (generated articles) - not safe to commit
 outputs/
+
+# Local work archives
+_work_archive/

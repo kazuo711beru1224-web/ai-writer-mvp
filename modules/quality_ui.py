@@ -377,8 +377,12 @@ def _serialize_guardrail_payload(res) -> str:
         )
 
         level = str(getattr(f, "level", "") or "")
+        allow_without_quote = rule_key in {
+            "最新情報は最終確認前提",
+            "重要主張の照合未完了",
+        }
         if level != "RISK" and (
-            not matched_texts
+            (not matched_texts and not allow_without_quote)
             or not str(diag.get("reason_text", "")).strip()
             or not str(diag.get("fix_text", "")).strip()
         ):

@@ -432,8 +432,13 @@ _LATEST_NEWS_WORDS = (
 )
 
 _FORECAST_WORDS = (
-    "見通し", "どうなる", "必要かな", "必要か", "将来", "これから",
-    "期待", "上向き", "好調", "可能性", "だろう",
+    "\u5e02\u5834\u898b\u901a\u3057",
+    "\u696d\u7e3e\u898b\u901a\u3057",
+    "\u666f\u6c17\u898b\u901a\u3057",
+    "\u682a\u4fa1\u898b\u901a\u3057",
+    "\u5e02\u5834\u4e88\u6e2c",
+    "\u696d\u7e3e\u4e88\u60f3",
+    "\u7d4c\u6e08\u898b\u901a\u3057",
 )
 
 _SPORTS_WORDS = (
@@ -925,6 +930,104 @@ def _maybe_news_alignment_findings(body_text: str, evidence_text: str, suggest_t
     return out
 
 
+
+def _has_bonus_divide_by_twelve_evidence(evidence_text: str) -> bool:
+    evidence = str(evidence_text or "")
+    if "標準賞与額" not in evidence:
+        return False
+    return bool(re.search(r"(?:÷|/)\s*12|12\s*で\s*割", evidence))
+
+
+def _split_claim_sentences(text: str) -> List[str]:
+    normalized = str(text or "").replace(chr(10), "。")
+    return [
+        sentence.strip()
+        for sentence in normalized.split("。")
+        if sentence.strip()
+    ]
+
+
+def _formula_alignment_findings(body_text: str, evidence_text: str) -> List[Finding]:
+    if not _has_bonus_divide_by_twelve_evidence(evidence_text):
+        return []
+
+    mismatches: List[str] = []
+    for sentence in _split_claim_sentences(body_text):
+        has_bonus = "賞与" in sentence
+        divides_by_count = bool(
+            re.search(r"(?:支給)?回数.{0,12}割", sentence)
+        )
+        if has_bonus and divides_by_count:
+            mismatches.append(sentence)
+
+    if not mismatches:
+        return []
+
+    return [
+        Finding(
+            level="RISK",
+            code="根拠式との不一致",
+            message=(
+                "本文の賞与の計算方法が、根拠欄の"
+                "「標準賞与額の合計÷12」と一致していません。"
+            ),
+            samples=mismatches[:8],
+        )
+    ]
+
+
+def _is_high_impact_claim_topic(
+    body_text: str,
+    evidence_text: str,
+    suggest_text: str,
+) -> bool:
+    blob = " ".join(
+        [str(body_text or ""), str(evidence_text or ""), str(suggest_text or "")]
+    )
+    words = (
+        "年金", "税", "相続", "贈与", "法律",
+        "登記", "保険", "医療", "薬", "診断",
+        "治療", "金融", "控除", "給付",
+        "基準額",
+    )
+    return any(word in blob for word in words)
+
+
+def _claim_alignment_pending_findings(
+    body_text: str,
+    evidence_text: str,
+    suggest_text: str,
+) -> List[Finding]:
+    if _is_blank(evidence_text):
+        return []
+    if not _is_high_impact_claim_topic(body_text, evidence_text, suggest_text):
+        return []
+
+    body_norm = _normalize_for_compare(body_text)
+    has_number = bool(_extract_tokens(body_norm))
+    signals = (
+        "計算", "算定", "合算", "割",
+        "基準額", "税率", "控除",
+        "期限", "締切", "対象者",
+    )
+    has_signal = any(signal in str(body_text or "") for signal in signals)
+
+    if not (has_number or has_signal):
+        return []
+
+    return [
+        Finding(
+            level="CAUTION",
+            code="重要主張の照合未完了",
+            message=(
+                "重要な数字・計算式・条件を扱っていますが、"
+                "一次情報との主張単位の照合はまだ実装されていません。"
+            ),
+            samples=None,
+        )
+    ]
+
+
 def _finalize(level: RiskLevel, findings: List[Finding]) -> GuardrailResult:
     return GuardrailResult(level=level, findings=tuple(findings))
 
@@ -1000,6 +1103,13 @@ def evaluate_guardrails_core(
     findings.extend(_maybe_revision_findings(body_text, evidence_text, suggest_text))
     findings.extend(_maybe_topic_drift_findings(body_text, evidence_text, suggest_text))
     findings.extend(_maybe_news_alignment_findings(body_text, evidence_text, suggest_text))
+
+    formula_findings = _formula_alignment_findings(body_text, evidence_text)
+    findings.extend(formula_findings)
+    if not formula_findings:
+        findings.extend(
+            _claim_alignment_pending_findings(body_text, evidence_text, suggest_text)
+        )
 
     level = max_level_from_list([f.level for f in findings]) if findings else "SAFE"
     return _finalize(level, findings)
