@@ -1,4 +1,4 @@
-from modules.guardrails_core import evaluate_guardrails
+﻿from modules.guardrails_core import evaluate_guardrails
 from modules.style_checker import check_style
 
 
@@ -110,3 +110,37 @@ def test_pension_future_word_is_not_treated_as_news_forecast():
     codes = _codes(result)
     assert "\u30cb\u30e5\u30fc\u30b9\u7cfb\u306e\u65ad\u5b9a\u8abf\u6ce8\u610f" not in codes
     assert "\u6700\u65b0\u60c5\u5831\u306f\u6700\u7d42\u78ba\u8a8d\u524d\u63d0" not in codes
+
+
+def test_revision_warning_does_not_trigger_on_generic_impact_phrase_only():
+    from modules.guardrails_core import evaluate_guardrails
+
+    result = evaluate_guardrails(
+        body_text=(
+            "\u5728\u8077\u8001\u9f62\u5e74\u91d1\u3067\u306f\u3001"
+            "\u8cde\u4e0e\u306e\u8aac\u660e\u304c\u5e74\u91d1\u984d\u306b\u5f71\u97ff\u3092\u53d7\u3051\u308b\u3053\u3068\u304c\u3042\u308a\u307e\u3059\u3002"
+        ),
+        evidence_text=(
+            "\u65e5\u672c\u5e74\u91d1\u6a5f\u69cb\u3002"
+            "\u305d\u306e\u6708\u4ee5\u524d1\u5e74\u9593\u306e\u6a19\u6e96\u8cde\u4e0e\u984d\u306e\u5408\u8a08\u309212\u3067\u5272\u308b\u3002"
+        ),
+    )
+
+    codes = {finding.code for finding in result.findings}
+    assert "\u6539\u6b63\u30c8\u30fc\u30af\u8981\u78ba\u8a8d" not in codes
+    assert "\u6539\u6b63\u6839\u62e0\u306e\u5177\u4f53\u6027\u4e0d\u8db3" not in codes
+
+
+def test_revision_warning_still_triggers_on_explicit_tax_revision_phrase():
+    from modules.guardrails_core import evaluate_guardrails
+
+    result = evaluate_guardrails(
+        body_text=(
+            "\u76f8\u7d9a\u7a0e\u306e\u7a0e\u5236\u6539\u6b63\u306b\u3088\u308a\u3001"
+            "\u57fa\u790e\u63a7\u9664\u306e\u6271\u3044\u304c\u5909\u308f\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002"
+        ),
+        evidence_text="\u56fd\u7a0e\u5e81\u3002\u76f8\u7d9a\u7a0e\u306e\u4e00\u822c\u7684\u306a\u8aac\u660e\u3002",
+    )
+
+    codes = {finding.code for finding in result.findings}
+    assert "\u6539\u6b63\u6839\u62e0\u306e\u5177\u4f53\u6027\u4e0d\u8db3" in codes

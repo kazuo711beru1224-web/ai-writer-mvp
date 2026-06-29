@@ -842,11 +842,26 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
                 st.write("")
 
                 st.markdown("**直し方の例**")
+                pension_keywords = ("在職老齢年金", "標準賞与額", "賞与", "12で割る")
+                if any(keyword in body for keyword in pension_keywords):
+                    original_example = "計算方法を確認することは重要です。"
+                    rewrite_example_text = (
+                        "在職老齢年金の説明では、賞与を支給回数で割るのではなく、"
+                        "その月以前1年間の標準賞与額の合計を12で割る考え方を、"
+                        "一次情報で確認してから書きましょう。"
+                    )
+                else:
+                    original_example = "制度の内容を確認することは重要です。"
+                    rewrite_example_text = (
+                        "読者が誤解しないように、制度の条件や数字は"
+                        "一次情報で確認してから説明しましょう。"
+                    )
+
                 st.write("元の文：")
-                st.markdown(_escape_and_mark("商品の特徴を確認することは重要です。", []), unsafe_allow_html=True)
+                st.markdown(_escape_and_mark(original_example, []), unsafe_allow_html=True)
                 st.write("")
                 st.write("直し方：")
-                st.markdown(_escape_and_mark("お客様に分かりやすく説明するために、商品の特徴を先に確認しておきましょう。", []), unsafe_allow_html=True)
+                st.markdown(_escape_and_mark(rewrite_example_text, []), unsafe_allow_html=True)
                 st.write("")
 
                 # ユーザが自分で修正案を書くための空欄（初期値は空）
