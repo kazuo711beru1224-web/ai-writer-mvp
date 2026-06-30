@@ -243,6 +243,9 @@ def build_evidence_text(url: str, title: str, facts: str, points: str) -> str:
     parts: List[str] = []
 
     u = str(url or "").strip()
+    # ユーザーが "URL: https://..." 形式で貼り付けた場合にプレフィックスが重複するのを防ぐ
+    if u.lower().startswith("url:"):
+        u = u[4:].strip()
     t = str(title or "").strip()
     f = _normalize_multiline(str(facts or ""))
     p = _normalize_multiline(str(points or ""))
@@ -1613,8 +1616,12 @@ def _build_prompt() -> str:
         p.append("・事実、政府見解、推測を分けて書いてください。")
         p.append("")
 
-    p.append("【この記事で最優先する読者の疑問】")
-    p.append(consult_question if consult_question else "読者の疑問を優先して答えてください。")
+    p.append("【この記事で最優先する読者の疑問（参考情報）】")
+    p.append("下記の読者の疑問を念頭に置いて記事を構成してください。ただし、この文章をそのまま本文に引用したり、見出しにしたりしないでください。")
+    if consult_question:
+        p.append(f"読者の疑問：{consult_question}")
+    else:
+        p.append("読者の疑問を優先して答えてください。")
     p.append("")
     p.append("【避けること】")
     p.append("・一般的な雑談に広げること")
@@ -1633,8 +1640,6 @@ def _build_prompt() -> str:
         p.append(f"【追加メモ】{memo}")
     if consult_situation:
         p.append(f"【今の状況】{consult_situation}")
-    if consult_question:
-        p.append(f"【知りたいこと】{consult_question}")
     p.append("")
     p.append("【出力形式】Markdown（見出しは # / ## / ### を使う）")
     p.append("【文字数目安】約4000字（±15%まで許容）")
