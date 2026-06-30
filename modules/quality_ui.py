@@ -872,7 +872,7 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
                     st.session_state[manual_rewrite_widget] = st.session_state.get(manual_rewrite_saved, "")
 
                 st.text_area(
-                    "",
+                    "自分で直した文章",
                     key=manual_rewrite_widget,
                     height=240,
                     help="書き直した文章をここに入力し、上の『確認したい文章』に貼り直して再確認してください。",

@@ -272,7 +272,7 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
 
     # ===== 入力欄 =====
     st.markdown("### チェックしたい文章")
-    st.text_area("", key=KEYS["check_text"], height=360)
+    st.text_area("確認したい文章", key=KEYS["check_text"], height=360, label_visibility="collapsed")
 
     body = str(st.session_state.get(KEYS["check_text"], "") or "")
     st.caption(f"本文文字数：{len(body)}")
