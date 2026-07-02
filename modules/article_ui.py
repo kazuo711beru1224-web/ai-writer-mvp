@@ -45,6 +45,7 @@ KEYS: Dict[str, str] = {
     "copy_last_sig": "article__copy_last_sig",
 
     "tone_reg": "article__tone_regulation",
+    "plan_result": "article__plan_result",
 
     "save_message": "article__save_message",
 }
@@ -69,6 +70,7 @@ PERSIST_KEYS: Set[str] = {
     KEYS["proof_suggest"],
     KEYS["proof_memo"],
     KEYS["tone_reg"],
+    KEYS["plan_result"],
     KEYS["save_message"],
 }
 
@@ -622,7 +624,8 @@ def _clear_form_only() -> None:
 
 def _clear_generated_only() -> None:
     for k in (
-        KEYS["last_text"], KEYS["consult_situation"], KEYS["consult_question"],
+        KEYS["last_text"], KEYS["plan_result"],
+        KEYS["consult_situation"], KEYS["consult_question"],
         KEYS["main_kw"], KEYS["sub_kw"], KEYS["theme"], KEYS["memo"],
         KEYS["tone_reg"],
         KEYS["evidence_url"], KEYS["evidence_title"], KEYS["evidence_facts"], KEYS["evidence_points"],
@@ -1562,7 +1565,56 @@ def _render_theme_input_tips() -> None:
     st.caption(f"要点メモ：{help_text['memo']}")
 
 
-def _build_prompt() -> str:
+def _build_planning_prompt() -> str:
+    _sync_evidence_text_from_parts()
+
+    consult_situation = str(st.session_state.get(KEYS["consult_situation"], "") or "").strip()
+    consult_question = str(st.session_state.get(KEYS["consult_question"], "") or "").strip()
+    main_kw = str(st.session_state.get(KEYS["main_kw"], "") or "").strip()
+    if not main_kw:
+        main_kw = _guess_main_kw_from_consult(consult_situation, consult_question)
+    sub_kw = str(st.session_state.get(KEYS["sub_kw"], "") or "").strip()
+    theme = str(st.session_state.get(KEYS["theme"], "") or "").strip()
+    evidence = str(_get_generation_evidence_text()).strip()
+
+    p: list[str] = []
+    p.append("あなたは日本語でSEO記事を設計する編集者です。")
+    p.append("以下の情報をもとに、記事の設計図を作ってください。")
+    p.append("")
+    p.append("【絶対ルール】")
+    p.append("・根拠に無い数字（年齢・年号・金額・期限・割合）は書かないでください。")
+    p.append("・架空の例を作らないでください。")
+    p.append("・断定できない内容は『〜とされています』『公式ページで確認が必要です』と書いてください。")
+    p.append("")
+    p.append(f"【読者の状況】{consult_situation}")
+    p.append(f"【知りたいこと】{consult_question}")
+    p.append(f"【メインキーワード】{main_kw}")
+    if sub_kw:
+        p.append(f"【サブキーワード】{sub_kw}")
+    if theme:
+        p.append(f"【記事テーマ】{theme}")
+    p.append("")
+    p.append("【AIに渡す根拠（優先参照）】")
+    p.append(evidence if evidence else "（未入力）")
+    p.append("")
+    p.append("以下の4項目を順番に出力してください。")
+    p.append("")
+    p.append("## 読者の困りごと")
+    p.append("（1〜2文。読者が今どんな状況で何に困っているかを整理する）")
+    p.append("")
+    p.append("## 最初に伝える結論")
+    p.append("（1文。読者が『これで方針が決まった』と思える核心を先に示す）")
+    p.append("")
+    p.append("## 読者がまず取る行動")
+    p.append("（1〜2文。記事を読み終えた後に読者が最初に取れる具体的な一歩）")
+    p.append("")
+    p.append("## 見出し構成")
+    p.append("（5〜8個の ## 見出し。冒頭の結論セクションから始め、詳細説明を続け、最後に次のステップで締める）")
+    p.append("番号付きリストで列挙してください。")
+    return "\n".join(p)
+
+
+def _build_writing_prompt(plan: str) -> str:
     _sync_evidence_text_from_parts()
 
     consult_situation = str(st.session_state.get(KEYS["consult_situation"], "") or "").strip()
@@ -1590,6 +1642,14 @@ def _build_prompt() -> str:
 
     p: list[str] = []
     p.append("あなたは日本語でSEO記事の下書きを作る編集者です。")
+    if plan:
+        p.append("")
+        p.append("【記事の設計図（必ず従うこと）】")
+        p.append("以下の設計図に沿って記事を書いてください。")
+        p.append("冒頭では『最初に伝える結論』と『読者がまず取る行動』を先に示してください。")
+        p.append("見出し構成は設計図の通りに使ってください。順番を変えないでください。")
+        p.append(plan)
+        p.append("")
     p.append("専門用語はやさしい言葉に言い換え、初心者にもわかる説明にしてください。")
     p.append("説明書のように固くしすぎず、読者が『なるほど、そういうことか』と理解しやすい自然な文章にしてください。")
     p.append("誇張や断定を避け、根拠が不十分な内容は『〜とされています』など慎重に表現してください。")
@@ -1683,6 +1743,14 @@ def _build_prompt() -> str:
     p.append("")
     p.append("【読者が一緒に検索しそうな言葉】")
     p.append(suggest if suggest else "（未入力）")
+    p.append("")
+    p.append("【仕上げの自動チェック（出力前に必ず確認すること）】")
+    p.append("本文を出力する前に、以下の点を自分でチェックして修正してください。")
+    p.append("1. 各見出しの末尾が『〜確認しましょう』『〜重要です』だけで終わっていないか。")
+    p.append("   → 終わっている場合は、なぜ重要か・次に何をするかを1文加えてください。")
+    p.append("2. 薄い一般論（『制度を理解することが大切です』など）が段落の中心になっていないか。")
+    p.append("   → 根拠や具体的な状況に置き換えてください。")
+    p.append("3. 冒頭の結論と最初の行動が、設計図通りに最初のセクションに入っているか。")
     p.append("")
     p.append("では、記事本文を出力してください。")
     return "\n".join(p)
@@ -2118,15 +2186,24 @@ def render_article_ui(
                 st.error(message)
             st.stop()
 
-        prompt = _build_prompt()
         try:
-            raw_text = generate_markdown(
-                prompt=prompt,
-                model="gpt-4o-mini",
-                use_real_api=use_real_api,
-                openai_api_key=openai_api_key,
-                timeout_sec=180,
-            )
+            with st.spinner("構成を考えています..."):
+                plan_text = generate_markdown(
+                    prompt=_build_planning_prompt(),
+                    model="gpt-4o-mini",
+                    use_real_api=use_real_api,
+                    openai_api_key=openai_api_key,
+                    timeout_sec=60,
+                )
+
+            with st.spinner("本文を書いています..."):
+                raw_text = generate_markdown(
+                    prompt=_build_writing_prompt(plan_text),
+                    model="gpt-4o-mini",
+                    use_real_api=use_real_api,
+                    openai_api_key=openai_api_key,
+                    timeout_sec=180,
+                )
 
             text = _strip_outer_code_fence(raw_text)
             text = _cleanup_generated_text(text)
@@ -2136,6 +2213,7 @@ def render_article_ui(
             st.session_state["api__status_detail"] = ""
             st.session_state["api__last_runtime_error"] = ""
 
+            st.session_state[KEYS["plan_result"]] = plan_text
             st.session_state[KEYS["last_text"]] = text
             st.session_state[KEYS["proof_evidence"]] = str(_get_effective_input_evidence_text())
             st.session_state[KEYS["proof_evidence_compact"]] = str(_get_generation_evidence_text())
@@ -2258,6 +2336,12 @@ def render_article_ui(
         with st.expander("AIが最初に作った文章を見る", expanded=False):
             st.caption("見比べたいときだけ開いてください。通常は上の本文欄だけで進められます。")
             st.code(last_text, language="text")
+
+        plan_result = str(st.session_state.get(KEYS["plan_result"], "") or "")
+        if not _is_blank(plan_result):
+            with st.expander("記事の設計図を見る", expanded=False):
+                st.caption("AIが本文を書く前に作った設計図です。見出し構成・結論・最初の行動を確認できます。")
+                st.markdown(plan_result)
 
         st.markdown('<div id="article-edited-result" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
         if check_edited:
