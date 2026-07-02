@@ -44,6 +44,8 @@ KEYS: Dict[str, str] = {
     "copy_text": "article__copy_text",
     "copy_last_sig": "article__copy_last_sig",
 
+    "tone_reg": "article__tone_regulation",
+
     "save_message": "article__save_message",
 }
 
@@ -66,6 +68,7 @@ PERSIST_KEYS: Set[str] = {
     KEYS["proof_evidence_compact"],
     KEYS["proof_suggest"],
     KEYS["proof_memo"],
+    KEYS["tone_reg"],
     KEYS["save_message"],
 }
 
@@ -184,6 +187,7 @@ def _close_detail_settings() -> None:
 def _has_any_detail_values() -> bool:
     detail_keys = (
         KEYS["main_kw"], KEYS["sub_kw"], KEYS["theme"], KEYS["memo"],
+        KEYS["tone_reg"],
         KEYS["evidence_url"], KEYS["evidence_title"], KEYS["evidence_facts"], KEYS["evidence_points"],
     )
     return any(not _is_blank(st.session_state.get(k, "")) for k in detail_keys)
@@ -525,6 +529,7 @@ def _take_snapshot() -> Dict[str, str]:
         KEYS["evidence_points"]: str(st.session_state.get(KEYS["evidence_points"], "")),
         KEYS["evidence"]: str(st.session_state.get(KEYS["evidence"], "")),
         KEYS["suggest"]: str(st.session_state.get(KEYS["suggest"], "")),
+        KEYS["tone_reg"]: str(st.session_state.get(KEYS["tone_reg"], "")),
     }
 
 
@@ -547,6 +552,7 @@ def _backup_article_inputs() -> None:
         KEYS["evidence_points"]: str(st.session_state.get(KEYS["evidence_points"], "")),
         KEYS["evidence"]: str(st.session_state.get(KEYS["evidence"], "")),
         KEYS["suggest"]: str(st.session_state.get(KEYS["suggest"], "")),
+        KEYS["tone_reg"]: str(st.session_state.get(KEYS["tone_reg"], "")),
     }
 
 
@@ -557,6 +563,7 @@ def _restore_article_inputs_from_backup() -> None:
 
     for k in (
         KEYS["main_kw"], KEYS["sub_kw"], KEYS["theme"], KEYS["memo"],
+        KEYS["tone_reg"],
         KEYS["consult_situation"], KEYS["consult_question"],
         KEYS["evidence_url"], KEYS["evidence_title"], KEYS["evidence_facts"], KEYS["evidence_points"],
         KEYS["evidence"], KEYS["suggest"],
@@ -602,6 +609,7 @@ def _copy_last_text_to_copy_area() -> None:
 def _clear_form_only() -> None:
     for k in (
         KEYS["main_kw"], KEYS["sub_kw"], KEYS["theme"], KEYS["memo"],
+        KEYS["tone_reg"],
         KEYS["consult_situation"], KEYS["consult_question"],
         KEYS["evidence_url"], KEYS["evidence_title"], KEYS["evidence_facts"], KEYS["evidence_points"],
         KEYS["evidence"], KEYS["suggest"],
@@ -616,6 +624,7 @@ def _clear_generated_only() -> None:
     for k in (
         KEYS["last_text"], KEYS["consult_situation"], KEYS["consult_question"],
         KEYS["main_kw"], KEYS["sub_kw"], KEYS["theme"], KEYS["memo"],
+        KEYS["tone_reg"],
         KEYS["evidence_url"], KEYS["evidence_title"], KEYS["evidence_facts"], KEYS["evidence_points"],
         KEYS["evidence"], KEYS["suggest"],
         KEYS["proof_evidence"], KEYS["proof_evidence_compact"], KEYS["proof_suggest"], KEYS["proof_memo"],
@@ -644,6 +653,7 @@ def _restore_snapshot_fill_blanks() -> None:
 
     targets = (
         KEYS["main_kw"], KEYS["sub_kw"], KEYS["theme"], KEYS["memo"],
+        KEYS["tone_reg"],
         KEYS["consult_situation"], KEYS["consult_question"],
         KEYS["evidence_url"], KEYS["evidence_title"], KEYS["evidence_facts"], KEYS["evidence_points"],
         KEYS["evidence"], KEYS["suggest"],
@@ -1576,6 +1586,7 @@ def _build_prompt() -> str:
         memo = _guess_memo_from_consult(consult_situation, consult_question)
 
     evidence = str(_get_generation_evidence_text()).strip()
+    tone_reg = str(st.session_state.get(KEYS["tone_reg"], "") or "").strip()
 
     p: list[str] = []
     p.append("あなたは日本語でSEO記事の下書きを作る編集者です。")
@@ -1585,6 +1596,22 @@ def _build_prompt() -> str:
     p.append("1文は60文字以内を目安にし、長い場合は2文に分けてください。")
     p.append("出力はMarkdown本文のみで、コードブロックは使わないでください。")
     p.append("")
+    p.append("【標準トンマナ】")
+    p.append("・一般の読者に向けて、やさしく実用的に書く")
+    p.append("・専門用語はかみくだく")
+    p.append("・です・ます調を基本にするが、同じ文末を3回以上続けない")
+    p.append("・確認項目の羅列で終わらせず、なぜ大事か、次に何を見るかまで書く")
+    p.append("・煽り、誇張、断定、薄い一般論を避ける")
+    p.append("・事実、推測、意見を分ける")
+    p.append("・数字や制度、最新情報は公式情報で確認する前提で書く")
+    p.append("")
+    if tone_reg:
+        p.append("【追加トンマナ・レギュレーション】")
+        p.append("以下は文体・表記・読者との距離感に関する追加指定です。")
+        p.append("標準トンマナより優先してください。")
+        p.append("ただし、事実確認、安全確認、第16条のルールは上書きしないでください。")
+        p.append(tone_reg)
+        p.append("")
     p.append("【文体・書き方の方針】")
     p.append("・読者が読み終えたあとに『これで分かった、次に何をすればいいか分かった』と思える内容にしてください。確認項目の羅列だけで終わらせないでください。")
     p.append("・なぜその内容が大事なのか、読者が次に見るべきものは何かまで、具体的に書いてください。")
@@ -1935,6 +1962,14 @@ def _render_detail_settings() -> None:
         if not memo:
             st.caption("読者や書き方のメモは空でも進められます。必要なら補足してください。")
         st.text_area("読者や書き方のメモ", height=110, key=KEYS["memo"], on_change=_keep_detail_open)
+
+        st.text_area(
+            "トンマナ・レギュレーション（任意）",
+            height=90,
+            key=KEYS["tone_reg"],
+            on_change=_keep_detail_open,
+        )
+        st.caption("空欄なら標準設定で作成します。請負先や媒体のルールがある場合だけ入力してください。")
 
         st.markdown("### 確認先")
         effective_evidence_text = _get_effective_input_evidence_text()
