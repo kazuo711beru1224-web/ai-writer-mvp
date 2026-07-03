@@ -2080,30 +2080,45 @@ def _render_detail_settings() -> None:
         if (_is_high_risk_topic() or _is_latest_news_topic() or _is_forecast_topic()) and _evidence_inputs_are_thin():
             _render_reference_hint_block()
 
-        st.text_input(
-            "参照URL（確認先）",
-            key=KEYS["evidence_url"],
-        )
-        st.caption("まずは1本だけで大丈夫です。足りないときだけ後で追加してください。")
+        # クリックのたびに再実行されると画面が飛ぶため、確認先の入力欄は
+        # st.form にまとめ、反映ボタンを押すまで再実行させない。
+        with st.form("article_detail_settings_form", clear_on_submit=False):
+            st.text_input(
+                "参照URL（確認先）",
+                key=KEYS["evidence_url"],
+            )
+            st.caption("まずは1本だけで大丈夫です。足りないときだけ後で追加してください。")
 
-        st.text_input(
-            "資料名・ページ名",
-            key=KEYS["evidence_title"],
+            st.text_input(
+                "資料名・ページ名",
+                key=KEYS["evidence_title"],
+            )
+
+            st.text_area(
+                "大事な数字・期限",
+                height=90,
+                key=KEYS["evidence_facts"],
+            )
+            st.caption(_get_detail_help_text()["numbers"])
+
+            st.text_area(
+                "このページでいちばん大事だったこと",
+                height=120,
+                key=KEYS["evidence_points"],
+            )
+            st.caption(_get_detail_help_text()["memo"])
+
+            detail_submitted = st.form_submit_button("この確認先を下書きに反映する")
+
+        st.caption(
+            "確認先を入力したら、先に『この確認先を下書きに反映する』を押してください。"
+            "押すまで下書きには使われません。"
         )
 
-        st.text_area(
-            "大事な数字・期限",
-            height=90,
-            key=KEYS["evidence_facts"],
-        )
-        st.caption(_get_detail_help_text()["numbers"])
-
-        st.text_area(
-            "このページでいちばん大事だったこと",
-            height=120,
-            key=KEYS["evidence_points"],
-        )
-        st.caption(_get_detail_help_text()["memo"])
+        if detail_submitted:
+            _sync_evidence_text_from_parts()
+            _open_detail_settings()
+            st.success("詳細設定を反映しました。")
 
         split_mode_on = _has_any_split_evidence_input()
         legacy_evidence_text = str(st.session_state.get(KEYS["evidence"], "") or "").strip()
@@ -2193,6 +2208,7 @@ def render_article_ui(
 
     st.divider()
     st.write("入力した内容をもとに、記事の下書きを作ります。あとで見直せるので、まずは出してみる感覚で大丈夫です。")
+    st.caption("確認先を入力した場合は、先に詳細設定の反映ボタンを押してください。")
 
     if st.button("✨ 下書きを作る", use_container_width=True, key="btn_article_generate"):
         situation = str(st.session_state.get(KEYS["consult_situation"], "") or "").strip()
