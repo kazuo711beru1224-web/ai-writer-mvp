@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from typing import Dict, Optional, Any, List
+from zoneinfo import ZoneInfo
+import datetime
 import html
 import json
 import re
 import streamlit as st
+import streamlit.components.v1 as components
 
 from modules.guardrails_core import evaluate_guardrails
 from modules.style_checker import check_style
@@ -94,6 +97,56 @@ ARTICLE_MEMO_KEYS: List[str] = [
     "article__writer_memo",
     "article__note",
 ]
+
+
+def _render_copy_button(text: str, label: str) -> None:
+    # onclick="..." は " で囲むため、JSON文字列自身が持つ " がそのままだと
+    # 属性がそこで終わってしまう。HTMLエンティティにして埋め込む。
+    safe_text = html.escape(json.dumps(str(text or "")), quote=True)
+    safe_label = json.dumps(label)
+    components.html(
+        f"""<button
+  data-label={safe_label}
+  style="margin:2px 0;padding:4px 14px;cursor:pointer;font-size:13px;border:1px solid #d1d5db;border-radius:4px;background:#f9fafb;"
+  onclick="(function(b){{var t={safe_text};var orig=b.dataset.label;if(navigator.clipboard){{navigator.clipboard.writeText(t).then(function(){{b.textContent='✓ コピーしました';setTimeout(function(){{b.textContent=orig;}},2000);}},function(){{fb(t,b,orig);}});}}else{{fb(t,b,orig);}}function fb(t2,b2,o){{var a=document.createElement('textarea');a.value=t2;a.style.cssText='position:fixed;opacity:0;top:0;left:0;';document.body.appendChild(a);a.focus();a.select();try{{document.execCommand('copy');b2.textContent='✓ コピーしました';setTimeout(function(){{b2.textContent=o;}},2000);}}catch(e){{}}document.body.removeChild(a);}}}})(this)"
+>{label}</button>""",
+        height=42,
+    )
+
+
+def _check_past_date_future_tense(body: str) -> List[Dict[str, Any]]:
+    today = datetime.datetime.now(ZoneInfo("Asia/Tokyo")).date()
+    today_str = today.strftime("%Y年%m月%d日")
+    pattern = re.compile(
+        r"(\d{4})年(\d{1,2})月(\d{1,2})日[^。\n]{0,40}"
+        r"(終了します|終わります|なります|使用できなくなります|廃止されます|"
+        r"締め切りです|失効します|できなくなります)",
+        re.UNICODE,
+    )
+    findings: List[Dict[str, Any]] = []
+    for m in pattern.finditer(body):
+        try:
+            d = datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            continue
+        if d < today:
+            matched = m.group(0)
+            findings.append({
+                "rank": "CAUTION",
+                "code": "時系列不一致",
+                "headline": "過去の日付が未来形で書かれている可能性があります。",
+                "lead": f"「{matched}」は、すでに過去の日付です。",
+                "issue_label": "期限・日付の表現",
+                "issue_text": matched,
+                "reason_text": (
+                    f"今日の日付（{today_str}）より前の期限が「〜ます」など未来形で書かれています。"
+                    "読者が誤解する可能性があります。"
+                ),
+                "fix_text": "「すでに終了しています」「すでに使用できなくなっています」など過去形に直してください。",
+                "rewrite_example": "",
+                "matched_texts": [matched],
+            })
+    return findings
 
 
 def _ensure_state() -> None:
@@ -816,6 +869,7 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
 """,
                     unsafe_allow_html=True,
                 )
+                _render_copy_button(text=body, label="指摘付き本文をコピー")
 
             if matched_texts:
                 st.markdown("**直した方がよい言葉**")
@@ -879,6 +933,10 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
                     label_visibility="collapsed",
                     on_change=_sync_widget_to_saved,
                     kwargs={"widget_key": manual_rewrite_widget, "saved_key": manual_rewrite_saved},
+                )
+                _render_copy_button(
+                    text=str(st.session_state.get(manual_rewrite_saved, "") or ""),
+                    label="修正文をコピー",
                 )
 
                 st.markdown("**次の確認**")
@@ -1081,6 +1139,23 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
             st.session_state[KEYS["diag_level"]] = str(getattr(guardrail_res, "level", "SAFE") or "SAFE")
             st.session_state[KEYS["diag_lines"]] = _format_diag_lines(guardrail_res)
             st.session_state[KEYS["diag_payload_json"]] = _serialize_guardrail_payload(guardrail_res)
+
+            timeline_items = _check_past_date_future_tense(body)
+            if timeline_items:
+                existing = _load_payload(st.session_state[KEYS["diag_payload_json"]])
+                st.session_state[KEYS["diag_payload_json"]] = json.dumps(
+                    timeline_items + existing, ensure_ascii=False
+                )
+                if st.session_state[KEYS["diag_level"]] not in ("RISK",):
+                    st.session_state[KEYS["diag_level"]] = "CAUTION"
+                tl_lines = "\n".join(
+                    f"- {f['rank']} / {f['code']}：{f['headline']}"
+                    for f in timeline_items
+                )
+                prev = st.session_state[KEYS["diag_lines"]]
+                st.session_state[KEYS["diag_lines"]] = (
+                    (tl_lines + "\n" + prev).strip() if prev else tl_lines
+                )
 
             style_level = str(getattr(style_res, "level", "SAFE") or "SAFE")
             st.session_state[KEYS["style_lines"]] = _format_diag_lines(style_res)

@@ -3,9 +3,13 @@ from __future__ import annotations
 from typing import Dict, Set, List, Tuple, Any
 from pathlib import Path
 from datetime import datetime
+from zoneinfo import ZoneInfo
+import html
+import json
 import re
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from modules.guardrails_core import evaluate_guardrails
 from modules.diagnosis_templates import build_buyer_diagnosis
@@ -1565,6 +1569,21 @@ def _render_theme_input_tips() -> None:
     st.caption(f"要点メモ：{help_text['memo']}")
 
 
+def _render_copy_button(text: str, label: str) -> None:
+    # onclick="..." は " で囲むため、JSON文字列自身が持つ " がそのままだと
+    # 属性がそこで終わってしまう。HTMLエンティティにして埋め込む。
+    safe_text = html.escape(json.dumps(str(text or "")), quote=True)
+    safe_label = json.dumps(label)
+    components.html(
+        f"""<button
+  data-label={safe_label}
+  style="margin:2px 0;padding:4px 14px;cursor:pointer;font-size:13px;border:1px solid #d1d5db;border-radius:4px;background:#f9fafb;"
+  onclick="(function(b){{var t={safe_text};var orig=b.dataset.label;if(navigator.clipboard){{navigator.clipboard.writeText(t).then(function(){{b.textContent='✓ コピーしました';setTimeout(function(){{b.textContent=orig;}},2000);}},function(){{fb(t,b,orig);}});}}else{{fb(t,b,orig);}}function fb(t2,b2,o){{var a=document.createElement('textarea');a.value=t2;a.style.cssText='position:fixed;opacity:0;top:0;left:0;';document.body.appendChild(a);a.focus();a.select();try{{document.execCommand('copy');b2.textContent='✓ コピーしました';setTimeout(function(){{b2.textContent=o;}},2000);}}catch(e){{}}document.body.removeChild(a);}}}})(this)"
+>{label}</button>""",
+        height=42,
+    )
+
+
 def _build_planning_prompt() -> str:
     _sync_evidence_text_from_parts()
 
@@ -1577,6 +1596,8 @@ def _build_planning_prompt() -> str:
     theme = str(st.session_state.get(KEYS["theme"], "") or "").strip()
     evidence = str(_get_generation_evidence_text()).strip()
 
+    today_str = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y年%m月%d日")
+
     p: list[str] = []
     p.append("あなたは日本語でSEO記事を設計する編集者です。")
     p.append("以下の情報をもとに、記事の設計図を作ってください。")
@@ -1585,6 +1606,12 @@ def _build_planning_prompt() -> str:
     p.append("・根拠に無い数字（年齢・年号・金額・期限・割合）は書かないでください。")
     p.append("・架空の例を作らないでください。")
     p.append("・断定できない内容は『〜とされています』『公式ページで確認が必要です』と書いてください。")
+    p.append("")
+    p.append(f"今日の日付：{today_str}")
+    p.append("・期限・開始日・終了日を書くときは、今日の日付と比較してください。")
+    p.append(f"・今日（{today_str}）より前の日付が付いた期限は「すでに終了しています」「すでに使用できなくなっています」と過去形で書いてください。")
+    p.append(f"・今日より後の日付が付いた期限だけ「終了します」「使用できなくなります」と未来形で書いてください。")
+    p.append("・どちらか判断できない場合は断定せず、公開前確認の対象にしてください。")
     p.append("")
     p.append(f"【読者の状況】{consult_situation}")
     p.append(f"【知りたいこと】{consult_question}")
@@ -1685,6 +1712,13 @@ def _build_writing_prompt(plan: str) -> str:
     p.append("3. 『現在』『最新』『変更』『改正』などの表現は、要点に同じ時期ラベルや変更内容がある場合だけ使ってください。")
     p.append("4. 根拠に現在の基準と過去の基準が並んでいる場合は、時期ごとに分けて書いてください。混ぜて一般論にしないでください。")
     p.append("5. 質問に無い周辺論点へ広げないでください。")
+    p.append("")
+    today_str = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y年%m月%d日")
+    p.append("【日付・期限の表現ルール】")
+    p.append(f"今日の日付：{today_str}")
+    p.append(f"・今日（{today_str}）より前の日付が付いた期限は「すでに終了しています」「すでに使用できなくなっています」と過去形で書いてください。")
+    p.append(f"・今日より後の日付が付いた期限だけ「終了します」「使用できなくなります」と未来形で書いてください。")
+    p.append("・判断できない場合は断定せず、公開前確認の対象にしてください。")
     p.append("")
 
     if _is_pension_topic_strict():
@@ -2049,21 +2083,18 @@ def _render_detail_settings() -> None:
         st.text_input(
             "参照URL（確認先）",
             key=KEYS["evidence_url"],
-            on_change=_sync_evidence_and_keep_detail_open,
         )
         st.caption("まずは1本だけで大丈夫です。足りないときだけ後で追加してください。")
 
         st.text_input(
             "資料名・ページ名",
             key=KEYS["evidence_title"],
-            on_change=_sync_evidence_and_keep_detail_open,
         )
 
         st.text_area(
             "大事な数字・期限",
             height=90,
             key=KEYS["evidence_facts"],
-            on_change=_sync_evidence_and_keep_detail_open,
         )
         st.caption(_get_detail_help_text()["numbers"])
 
@@ -2071,7 +2102,6 @@ def _render_detail_settings() -> None:
             "このページでいちばん大事だったこと",
             height=120,
             key=KEYS["evidence_points"],
-            on_change=_sync_evidence_and_keep_detail_open,
         )
         st.caption(_get_detail_help_text()["memo"])
 
@@ -2315,6 +2345,10 @@ def render_article_ui(
             st.info("この欄の文章は、いまのAI下書きとは別に編集されています。続けて直して大丈夫です。")
 
         st.text_area("公開前に自分で直す本文", key=KEYS["copy_text"], height=420)
+        _render_copy_button(
+            text=str(st.session_state.get(KEYS["copy_text"], "") or ""),
+            label="この本文をコピー",
+        )
 
         st.markdown('<div id="article-actions" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
         action_col1, action_col2 = st.columns([1, 1])
@@ -2336,6 +2370,7 @@ def render_article_ui(
         with st.expander("AIが最初に作った文章を見る", expanded=False):
             st.caption("見比べたいときだけ開いてください。通常は上の本文欄だけで進められます。")
             st.code(last_text, language="text")
+            _render_copy_button(text=last_text, label="AI原文をコピー")
 
         plan_result = str(st.session_state.get(KEYS["plan_result"], "") or "")
         if not _is_blank(plan_result):
