@@ -288,6 +288,38 @@ def _aliases_from_era_year(token: str) -> Set[str]:
     return aliases
 
 
+# =========================
+# 月・日トークンのゼロ埋め有無（「2日」↔「02日」等）
+# =========================
+_MONTH_TOKEN_RE = re.compile(r"^(\d+)月$")
+_DAY_TOKEN_RE = re.compile(r"^(\d+)日$")
+
+
+def _aliases_from_zero_padded_date_part(token: str) -> Set[str]:
+    """
+    「12月」「2日」のような月・日トークンについて、ゼロ埋め有無の表記ゆれを吸収する。
+    「3か月」のような期間トークンや、年号・金額・割合には影響しない
+    （^...$ でこの2パターンのみに一致させているため）。
+    """
+    aliases: Set[str] = set()
+
+    m = _MONTH_TOKEN_RE.match(token)
+    if m:
+        n = int(m.group(1))
+        aliases.add(f"{n}月")
+        aliases.add(f"{n:02d}月")
+        return aliases
+
+    m = _DAY_TOKEN_RE.match(token)
+    if m:
+        n = int(m.group(1))
+        aliases.add(f"{n}日")
+        aliases.add(f"{n:02d}日")
+        return aliases
+
+    return aliases
+
+
 def _expand_token_aliases(token: str) -> Set[str]:
     base = _canonicalize_token(token)
     aliases: Set[str] = {base}
@@ -295,6 +327,7 @@ def _expand_token_aliases(token: str) -> Set[str]:
     aliases |= _aliases_from_fraction(base)
     aliases |= _aliases_from_percent(base)
     aliases |= _aliases_from_era_year(base)
+    aliases |= _aliases_from_zero_padded_date_part(base)
 
     return {a for a in aliases if a}
 
