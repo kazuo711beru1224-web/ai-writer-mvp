@@ -1081,6 +1081,66 @@ def _future_tense_past_date_findings(
     return out
 
 
+# =========================
+# H案：例外・代替手段の落とし込み不足（周辺文スキャン型）
+# =========================
+_EVIDENCE_EXCEPTION_SIGNAL_WORDS = (
+    "ただし", "場合", "暫定", "例外", "経過措置", "特例", "猶予", "または", "代替", "移行期間",
+)
+
+_BODY_RESCUE_WORDS = (
+    "ただし", "場合", "暫定", "例外", "経過措置", "特例", "猶予", "当面", "引き続き", "従来どおり",
+)
+
+_STRONG_NEGATION_WORDS = (
+    "できません", "受けられません", "使えません", "認められません", "できなくなります",
+)
+
+
+def _maybe_missing_exception_or_alternative_findings(
+    body_text: str,
+    evidence_text: str,
+) -> List[Finding]:
+    """
+    根拠に例外・代替・暫定対応の記述があるのに、本文の強い否定文の周辺
+    （その文・直前1文・直後1文）に救済表現が無い場合を CAUTION として検知する。
+    本文全体のどこかに「ただし」があるだけでは許容しない（局所判定）。
+    """
+    evidence = str(evidence_text or "")
+    if _is_blank(evidence):
+        return []
+    if not _contains_any_phrase(evidence, _EVIDENCE_EXCEPTION_SIGNAL_WORDS):
+        return []
+
+    sentences = _split_claim_sentences(body_text)
+
+    flagged: List[str] = []
+    for i, sentence in enumerate(sentences):
+        if not _contains_any_phrase(sentence, _STRONG_NEGATION_WORDS):
+            continue
+
+        window = sentences[max(0, i - 1): min(len(sentences), i + 2)]
+        if any(_contains_any_phrase(w, _BODY_RESCUE_WORDS) for w in window):
+            continue
+
+        flagged.append(sentence)
+
+    if not flagged:
+        return []
+
+    return [
+        Finding(
+            level="CAUTION",
+            code="例外条件の落とし込み不足",
+            message=(
+                "一次情報にある例外・暫定対応・代替手段が、"
+                "本文の強い言い切り表現の周辺で説明されていない可能性があります。"
+            ),
+            samples=flagged[:8],
+        )
+    ]
+
+
 def _finalize(level: RiskLevel, findings: List[Finding]) -> GuardrailResult:
     return GuardrailResult(level=level, findings=tuple(findings))
 
@@ -1103,12 +1163,14 @@ def evaluate_guardrails_core(
        - 根拠不足なら控えめに逃がす
        - ニュース系は原則 SAFE にしない
     G) 過去日付が未来形で書かれている場合を CAUTION で警告（時系列不一致）
+    H) 根拠にある例外・代替・暫定対応が、本文の強い否定文の周辺に無い場合を CAUTION で警告
     """
     body_norm = _normalize_for_compare(body_text)
     ev_norm = _normalize_for_compare(evidence_text)
 
     findings: List[Finding] = []
     findings.extend(_future_tense_past_date_findings(body_text))
+    findings.extend(_maybe_missing_exception_or_alternative_findings(body_text, evidence_text))
 
     body_tokens = _extract_tokens(body_norm)
 
