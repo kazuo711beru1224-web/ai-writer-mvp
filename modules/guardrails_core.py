@@ -1,9 +1,11 @@
 
 from __future__ import annotations
 
+import datetime
 import re
 from fractions import Fraction
-from typing import List, Tuple, Set
+from typing import List, Optional, Tuple, Set
+from zoneinfo import ZoneInfo
 
 from .guardrails_types import Finding, GuardrailResult, RiskLevel, max_level_from_list
 
@@ -1028,6 +1030,57 @@ def _claim_alignment_pending_findings(
     ]
 
 
+# =========================
+# G案：過去日付が未来形で書かれている（時系列不一致）
+# =========================
+_PAST_DATE_FUTURE_TENSE_RE = re.compile(
+    r"(\d{4})年(\d{1,2})月(\d{1,2})日[^。\n]{0,40}"
+    r"(終了します|終わります|なります|使用できなくなります|廃止されます|"
+    r"締め切りです|失効します|できなくなります)",
+    re.UNICODE,
+)
+
+
+def _future_tense_past_date_findings(
+    body_text: str,
+    *,
+    today: Optional[datetime.date] = None,
+) -> List[Finding]:
+    """
+    本文中の「YYYY年M月D日〜します」のような未来形の期限表現のうち、
+    その日付がすでに過去になっているものを CAUTION として検知する。
+    """
+    body = str(body_text or "")
+    if not body:
+        return []
+
+    ref_today = today or datetime.datetime.now(ZoneInfo("Asia/Tokyo")).date()
+
+    out: List[Finding] = []
+    for m in _PAST_DATE_FUTURE_TENSE_RE.finditer(body):
+        try:
+            d = datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            continue
+        if d >= ref_today:
+            continue
+
+        matched = m.group(0)
+        out.append(
+            Finding(
+                level="CAUTION",
+                code="時系列不一致",
+                message=(
+                    f"「{matched}」は、すでに過去の日付です。"
+                    "過去の日付が未来形で書かれています。"
+                ),
+                samples=[matched],
+            )
+        )
+
+    return out
+
+
 def _finalize(level: RiskLevel, findings: List[Finding]) -> GuardrailResult:
     return GuardrailResult(level=level, findings=tuple(findings))
 
@@ -1049,11 +1102,14 @@ def evaluate_guardrails_core(
        - 根拠にない数字や成績の補完
        - 根拠不足なら控えめに逃がす
        - ニュース系は原則 SAFE にしない
+    G) 過去日付が未来形で書かれている場合を CAUTION で警告（時系列不一致）
     """
     body_norm = _normalize_for_compare(body_text)
     ev_norm = _normalize_for_compare(evidence_text)
 
     findings: List[Finding] = []
+    findings.extend(_future_tense_past_date_findings(body_text))
+
     body_tokens = _extract_tokens(body_norm)
 
     if body_tokens and _is_blank(ev_norm):

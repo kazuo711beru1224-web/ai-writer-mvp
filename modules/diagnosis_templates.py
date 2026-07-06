@@ -251,6 +251,21 @@ DIAGNOSIS_RULES: Dict[str, Dict[str, Any]] = {
         "example_labels": [],
     },
 
+    "時系列不一致": {
+        "rank": "CAUTION",
+        "buyer_conclusion": "日付の表現に、公開時点とのズレがある可能性があります。",
+        "issue_label": "期限・日付の表現",
+        "issue_template": "過去の日付なのに、これから起きる予定のように書かれています。",
+        "reason_template": (
+            "読者が制度変更や期限を誤解する可能性があります。"
+        ),
+        "fix_template": (
+            "過去の日付は「実施されました」「終了しました」「変更されています」など、"
+            "現在から見た表現に直してください。"
+        ),
+        "example_labels": [],
+    },
+
     "根拠式との不一致": {
         "rank": "RISK",
         "buyer_conclusion": "一次情報の計算式と違う可能性があります。公開前に修正してください。",

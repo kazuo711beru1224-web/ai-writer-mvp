@@ -1140,23 +1140,6 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
             st.session_state[KEYS["diag_lines"]] = _format_diag_lines(guardrail_res)
             st.session_state[KEYS["diag_payload_json"]] = _serialize_guardrail_payload(guardrail_res)
 
-            timeline_items = _check_past_date_future_tense(body)
-            if timeline_items:
-                existing = _load_payload(st.session_state[KEYS["diag_payload_json"]])
-                st.session_state[KEYS["diag_payload_json"]] = json.dumps(
-                    timeline_items + existing, ensure_ascii=False
-                )
-                if st.session_state[KEYS["diag_level"]] not in ("RISK",):
-                    st.session_state[KEYS["diag_level"]] = "CAUTION"
-                tl_lines = "\n".join(
-                    f"- {f['rank']} / {f['code']}：{f['headline']}"
-                    for f in timeline_items
-                )
-                prev = st.session_state[KEYS["diag_lines"]]
-                st.session_state[KEYS["diag_lines"]] = (
-                    (tl_lines + "\n" + prev).strip() if prev else tl_lines
-                )
-
             style_level = str(getattr(style_res, "level", "SAFE") or "SAFE")
             st.session_state[KEYS["style_lines"]] = _format_diag_lines(style_res)
             st.session_state[KEYS["style_payload_json"]] = _serialize_style_payload(style_res, body)
