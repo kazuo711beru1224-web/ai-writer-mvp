@@ -99,19 +99,25 @@ ARTICLE_MEMO_KEYS: List[str] = [
 ]
 
 
-def _render_copy_button(text: str, label: str) -> None:
-    # onclick="..." は " で囲むため、JSON文字列自身が持つ " がそのままだと
-    # 属性がそこで終わってしまう。HTMLエンティティにして埋め込む。
+def _build_copy_button_html(text: str, label: str) -> str:
+    """
+    コピー用ボタンのHTMLを組み立てる。
+    - safe_text はJS文字列リテラルとして埋め込むため json.dumps + html.escape を維持。
+    - safe_label は data-label というただのHTML属性値なのでJSON化せず、
+      html.escape した通常文字列をそのまま入れる（\\uXXXXエスケープのまま
+      表示が戻ってしまう不具合を避けるため）。
+    """
     safe_text = html.escape(json.dumps(str(text or "")), quote=True)
-    safe_label = json.dumps(label)
-    components.html(
-        f"""<button
-  data-label={safe_label}
+    safe_label = html.escape(str(label or ""), quote=True)
+    return f"""<button
+  data-label="{safe_label}"
   style="margin:2px 0;padding:4px 14px;cursor:pointer;font-size:13px;border:1px solid #d1d5db;border-radius:4px;background:#f9fafb;"
   onclick="(function(b){{var t={safe_text};var orig=b.dataset.label;if(navigator.clipboard){{navigator.clipboard.writeText(t).then(function(){{b.textContent='✓ コピーしました';setTimeout(function(){{b.textContent=orig;}},2000);}},function(){{fb(t,b,orig);}});}}else{{fb(t,b,orig);}}function fb(t2,b2,o){{var a=document.createElement('textarea');a.value=t2;a.style.cssText='position:fixed;opacity:0;top:0;left:0;';document.body.appendChild(a);a.focus();a.select();try{{document.execCommand('copy');b2.textContent='✓ コピーしました';setTimeout(function(){{b2.textContent=o;}},2000);}}catch(e){{}}document.body.removeChild(a);}}}})(this)"
->{label}</button>""",
-        height=42,
-    )
+>{label}</button>"""
+
+
+def _render_copy_button(text: str, label: str) -> None:
+    components.html(_build_copy_button_html(text, label), height=42)
 
 
 def _check_past_date_future_tense(body: str) -> List[Dict[str, Any]]:
