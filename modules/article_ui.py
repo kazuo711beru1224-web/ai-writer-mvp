@@ -2131,7 +2131,9 @@ def _render_detail_settings() -> None:
         if detail_submitted:
             _sync_evidence_text_from_parts()
             _open_detail_settings()
-            st.success("詳細設定を反映しました。")
+            # st.success はレイアウトの高さを押し下げてスクロール位置がずれやすいため、
+            # 高さに影響しない st.toast で反映完了を伝える。
+            st.toast("詳細設定を反映しました。")
 
         split_mode_on = _has_any_split_evidence_input()
         legacy_evidence_text = str(st.session_state.get(KEYS["evidence"], "") or "").strip()
@@ -2139,8 +2141,11 @@ def _render_detail_settings() -> None:
             st.info("以前の保存データの根拠が残っています。分割欄が空の間は、その根拠をそのまま使います。")
             st.code(legacy_evidence_text, language="text")
 
+        # 空/非空で丸ごと出現・消滅すると反映ボタン押下時にレイアウトが大きく変わり
+        # スクロール位置がずれやすいため、同じ位置に常時コンテナを置き、
+        # 中身の有無だけを _render_large_text_preview 側の「（未入力）」表示に任せる。
         current_generation_evidence = "\n".join(_normalize_lines(_get_generation_evidence_text()))
-        if not _is_blank(current_generation_evidence):
+        with st.container():
             st.markdown("### AIが生成に使う要点（自動整理）")
             _render_large_text_preview(
                 title="生成に使う要点",
