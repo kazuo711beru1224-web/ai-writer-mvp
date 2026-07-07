@@ -122,6 +122,13 @@ RESTORE_APPLY_KEYS = [
     "article__suggest_text",
     "article__last_text",
     "check__text",
+    "article__consult_situation",
+    "article__consult_question",
+    "article__evidence_url",
+    "article__evidence_title",
+    "article__evidence_facts",
+    "article__evidence_points",
+    "article__tone_regulation",
 ]
 
 SNAPSHOT_FALLBACK_MAP = {
