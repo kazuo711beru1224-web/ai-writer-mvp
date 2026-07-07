@@ -41,6 +41,7 @@ LOGS_DIR = BASE_DIR / "logs"
 
 BACKUP_PREFIX = "state_"
 BACKUP_SUFFIX = ".json"
+AUTOSAVE_FILENAME = "autosave_state.json"
 
 MENU_HOME = "ホーム"
 MENU_ARTICLE = "記事モード（SEOライティング）"
@@ -80,6 +81,7 @@ SS_DEFAULTS: Dict[str, Any] = {
     "backup__restore_target": "",
     "backup__restore_status_kind": "",
     "backup__restore_status_text": "",
+    "autosave__last_sig": "",
     "api__status_code": "",
     "api__status_message": "",
     "api__status_detail": "",
@@ -95,6 +97,13 @@ WORK_SIG_KEYS = [
     "article__suggest_text",
     "article__last_text",
     "check__text",
+    "article__consult_situation",
+    "article__consult_question",
+    "article__evidence_url",
+    "article__evidence_title",
+    "article__evidence_facts",
+    "article__evidence_points",
+    "article__tone_regulation",
 ]
 
 RESTORE_REQUEST_KEYS = [
@@ -342,7 +351,10 @@ def _iter_backup_files(logs_dir: Path) -> Iterable[Path]:
     if not logs_dir.exists():
         return []
     files = sorted(
-        logs_dir.glob(f"{BACKUP_PREFIX}*{BACKUP_SUFFIX}"),
+        (
+            p for p in logs_dir.glob(f"{BACKUP_PREFIX}*{BACKUP_SUFFIX}")
+            if p.name != AUTOSAVE_FILENAME
+        ),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
@@ -467,6 +479,34 @@ def _handle_pending_backup_save(logs_dir: Path) -> None:
         st.session_state["backup__status_kind"] = "error"
         st.session_state["backup__status_text"] = f"保存に失敗しました。{e}"
         st.rerun()
+
+
+def _autosave_state(logs_dir: Path) -> None:
+    # 記事モードの入力欄が全て空のときは自動保存しない。
+    # （スリープ復帰などでsession_stateが空になった直後の1回目のrerunで、
+    #   既存の自動保存ファイルを空の内容で上書きしてしまう事故を防ぐため）
+    work_payload = _work_signature_payload()
+    if not any(v.strip() for v in work_payload.values()):
+        return
+
+    work_sig = _compute_work_signature()
+    last_sig = str(st.session_state.get("autosave__last_sig") or "").strip()
+    if last_sig and work_sig == last_sig:
+        return
+
+    payload = _safe_dump_state()
+    if not payload:
+        return
+
+    try:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        payload["__meta__work_sig"] = work_sig
+        fp = logs_dir / AUTOSAVE_FILENAME
+        fp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        st.session_state["autosave__last_sig"] = work_sig
+    except Exception:
+        # 自動保存の失敗は手動保存の状態表示に影響させないため、画面には出さない
+        pass
 
 
 def _show_backup_status() -> None:
@@ -807,6 +847,9 @@ def main() -> None:
 
     # 履歴画面からの復元要求も、本文描画後に実行する
     _handle_pending_restore(LOGS_DIR)
+
+    # 記事モードの入力・生成結果を、手動保存とは別にサイレントで自動保存する
+    _autosave_state(LOGS_DIR)
 
 
 if __name__ == "__main__":
