@@ -509,6 +509,24 @@ def _autosave_state(logs_dir: Path) -> None:
         pass
 
 
+def _should_offer_autosave_restore(logs_dir: Path) -> bool:
+    if bool(st.session_state.get("tmp__restore_prompt_dismissed")):
+        return False
+
+    fp = logs_dir / AUTOSAVE_FILENAME
+    try:
+        if not fp.exists() or fp.stat().st_size == 0:
+            return False
+    except OSError:
+        return False
+
+    work_payload = _work_signature_payload()
+    if any(v.strip() for v in work_payload.values()):
+        return False
+
+    return True
+
+
 def _show_backup_status() -> None:
     kind = str(st.session_state.get("backup__status_kind") or "").strip()
     text = str(st.session_state.get("backup__status_text") or "").strip()
@@ -649,10 +667,32 @@ def _handle_pending_restore(logs_dir: Path) -> None:
         st.rerun()
 
 
+def _render_autosave_restore_prompt(logs_dir: Path) -> None:
+    if not _should_offer_autosave_restore(logs_dir):
+        return
+
+    st.info("前回の自動保存データがあります。スリープや再接続で入力が消えた場合は復元できます。")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("前回の入力を復元する", use_container_width=True):
+            st.session_state["backup__restore_request"] = True
+            st.session_state["backup__restore_target"] = AUTOSAVE_FILENAME
+            st.session_state["tmp__restore_prompt_dismissed"] = True
+            st.rerun()
+    with col2:
+        if st.button("今回は使わない", use_container_width=True):
+            st.session_state["tmp__restore_prompt_dismissed"] = True
+            st.rerun()
+
+    st.divider()
+
+
 def _render_sidebar() -> str:
     with st.sidebar:
         st.markdown(f"## {APP_TITLE}")
         st.caption(f"バージョン：{APP_VERSION}")
+
+        _render_autosave_restore_prompt(LOGS_DIR)
 
         st.markdown("### 🔐 AI下書き作成の設定")
         st.text_input(
