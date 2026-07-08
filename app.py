@@ -5,6 +5,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 
@@ -344,7 +345,7 @@ def _now_stamp() -> str:
 
 
 def _fmt_mtime(ts: float) -> str:
-    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.fromtimestamp(ts, tz=ZoneInfo("Asia/Tokyo")).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _iter_backup_files(logs_dir: Path) -> Iterable[Path]:
@@ -469,11 +470,11 @@ def _handle_pending_backup_save(logs_dir: Path) -> None:
         if created:
             when = str(st.session_state.get("backup__at") or "").strip()
             st.session_state["backup__status_kind"] = "success"
-            st.session_state["backup__status_text"] = f"今の状態を保存しました。（保存日時：{when}）"
+            st.session_state["backup__status_text"] = f"今の状態を保存しました。（保存日時：{when} 日本時間）"
         else:
             when = str(st.session_state.get("backup__at") or "").strip()
             st.session_state["backup__status_kind"] = "info"
-            st.session_state["backup__status_text"] = f"この状態はすでに保存されています。（最新の保存日時：{when}）"
+            st.session_state["backup__status_text"] = f"この状態はすでに保存されています。（最新の保存日時：{when} 日本時間）"
         st.rerun()
     except Exception as e:
         st.session_state["backup__status_kind"] = "error"
@@ -658,7 +659,7 @@ def _handle_pending_restore(logs_dir: Path) -> None:
         st.session_state["backup__at"] = restored_at
         st.session_state["backup__last_saved_work_at"] = restored_at
         st.session_state["backup__restore_status_kind"] = "success"
-        st.session_state["backup__restore_status_text"] = f"保存していた状態に戻しました。（記録日時：{restored_at}）"
+        st.session_state["backup__restore_status_text"] = f"保存していた状態に戻しました。（記録日時：{restored_at} 日本時間）"
         st.session_state["menu_request"] = MENU_ARTICLE
         st.rerun()
     except Exception as e:
