@@ -176,6 +176,11 @@ QUESTION_TYPE_LABELS: Dict[str, str] = {
 
 DETAIL_OPEN_KEY = "article__detail_open"
 
+# 「この確認先を下書きに反映する」押下直後だけ、確認先フォーム付近へ
+# スクロールを戻すための一時フラグとアンカーID。
+SCROLL_TO_EVIDENCE_FLAG_KEY = "tmp__scroll_to_evidence_after_detail_apply"
+DETAIL_EVIDENCE_ANCHOR_ID = "detail-evidence-anchor"
+
 
 def _ensure_detail_open_initialized() -> None:
     if DETAIL_OPEN_KEY not in st.session_state:
@@ -1590,6 +1595,52 @@ def _render_copy_button(text: str, label: str) -> None:
     components.html(_build_copy_button_html(text, label), height=42)
 
 
+def _build_scroll_to_anchor_script_html(anchor_id: str, nonce: str = "") -> str:
+    """
+    指定したid要素へ一度だけscrollIntoViewするスクリプトHTMLを組み立てる。
+    st.markdownのscriptはStreamlit側で無効化される場合があるため、
+    components.html（iframe）経由で実行する。iframe内から親ドキュメントの
+    要素を操作するため window.parent.document を使う。
+
+    nonceはcomponents.htmlに渡すHTML文字列を毎回変える目的専用の値。
+    anchor_idは常に同じ文字列のため、nonce無しだと2回目以降は前回と
+    完全に同じHTMLになり、ブラウザがiframeの再読み込み（＝script再実行）
+    を省略して2回目以降スクロールが発火しない不具合があったため追加した。
+    """
+    safe_id = json.dumps(str(anchor_id or ""))
+    safe_nonce = html.escape(str(nonce or ""), quote=True)
+    return f"""<!-- nonce:{safe_nonce} -->
+<script>
+(function() {{
+    var id = {safe_id};
+    var doc = window.parent ? window.parent.document : document;
+    var el = doc.getElementById(id);
+    if (el && el.scrollIntoView) {{
+        el.scrollIntoView({{behavior: "auto", block: "start"}});
+    }}
+}})();
+</script>"""
+
+
+def _mark_scroll_to_evidence_after_detail_apply() -> None:
+    st.session_state[SCROLL_TO_EVIDENCE_FLAG_KEY] = True
+
+
+def _render_scroll_to_evidence_anchor_if_flagged() -> None:
+    """
+    確認先フォームの反映ボタン押下直後だけ、確認先セクション付近の
+    アンカーへスクロールを戻す。フラグが無い通常描画では何もしない。
+    """
+    if not st.session_state.get(SCROLL_TO_EVIDENCE_FLAG_KEY, False):
+        return
+    st.session_state[SCROLL_TO_EVIDENCE_FLAG_KEY] = False
+    nonce = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    components.html(
+        _build_scroll_to_anchor_script_html(DETAIL_EVIDENCE_ANCHOR_ID, nonce=nonce),
+        height=0,
+    )
+
+
 def _build_planning_prompt() -> str:
     _sync_evidence_text_from_parts()
 
@@ -2086,12 +2137,24 @@ def _render_detail_settings() -> None:
         )
         st.caption("空欄なら標準設定で作成します。請負先や媒体のルールがある場合だけ入力してください。")
 
+        st.markdown(
+            f'<div id="{DETAIL_EVIDENCE_ANCHOR_ID}" style="scroll-margin-top: 120px;"></div>',
+            unsafe_allow_html=True,
+        )
         st.markdown("### 確認先")
         effective_evidence_text = _get_effective_input_evidence_text()
         _render_evidence_compact_guide(effective_evidence_text)
 
-        if (_is_high_risk_topic() or _is_latest_news_topic() or _is_forecast_topic()) and _evidence_inputs_are_thin():
-            _render_reference_hint_block()
+        # 表示/非表示で丸ごと出し引きすると、フォームより上の高さが変わり
+        # 反映ボタン押下後にスクロール位置がずれるため、常にcontainerを置き、
+        # 必要なときだけ中身を表示する（不要なときは短い説明だけ残す）。
+        with st.container():
+            if (
+                _is_high_risk_topic() or _is_latest_news_topic() or _is_forecast_topic()
+            ) and _evidence_inputs_are_thin():
+                _render_reference_hint_block()
+            else:
+                st.caption("公式サイトの確認先が必要なテーマでは、ここに探し方のヒントを表示します。")
 
         # クリックのたびに再実行されると画面が飛ぶため、確認先の入力欄は
         # st.form にまとめ、反映ボタンを押すまで再実行させない。
@@ -2134,6 +2197,10 @@ def _render_detail_settings() -> None:
             # st.success はレイアウトの高さを押し下げてスクロール位置がずれやすいため、
             # 高さに影響しない st.toast で反映完了を伝える。
             st.toast("詳細設定を反映しました。")
+            # 反映ボタン押下直後だけ、確認先フォーム付近へスクロールを戻す。
+            _mark_scroll_to_evidence_after_detail_apply()
+
+        _render_scroll_to_evidence_anchor_if_flagged()
 
         split_mode_on = _has_any_split_evidence_input()
         legacy_evidence_text = str(st.session_state.get(KEYS["evidence"], "") or "").strip()
