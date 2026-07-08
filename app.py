@@ -880,13 +880,16 @@ def main() -> None:
     _normalize_menu()
 
     menu = _render_sidebar()
+
+    # 復元要求は、記事モードなどの入力ウィジェットが生成される前に処理する。
+    # ウィジェット生成後に session_state を書き換えるとStreamlitがエラーにするため、
+    # _render_current_page() より必ず先に実行する。
+    _handle_pending_restore(LOGS_DIR)
+
     _render_current_page(menu)
 
     # サイドバーで押された保存は、本文描画後に実行する
     _handle_pending_backup_save(LOGS_DIR)
-
-    # 履歴画面からの復元要求も、本文描画後に実行する
-    _handle_pending_restore(LOGS_DIR)
 
     # 記事モードの入力・生成結果を、手動保存とは別にサイレントで自動保存する
     _autosave_state(LOGS_DIR)
