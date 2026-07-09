@@ -1622,6 +1622,107 @@ def _render_copy_button(text: str, label: str) -> None:
     components.html(_build_copy_button_html(text, label), height=42)
 
 
+# 記事モードのスクロール位置は、Pythonのsession_stateではなくブラウザの
+# sessionStorageに持たせる。Streamlitの再実行はページ遷移ではなく同一
+# ドキュメント内の差し替えなので、sessionStorageは再実行をまたいで残る。
+# キーは記事モード専用（他モードのスクロール復帰は別タスクで扱う）。
+ARTICLE_SCROLL_STORAGE_KEY = "ai_writer_scroll_article"
+ARTICLE_TOP_ANCHOR_ID = "article-top"
+
+
+def _build_article_scroll_tracker_script_html() -> str:
+    """
+    記事モードの現在のスクロール位置を、スクロールのたびにsessionStorageへ
+    保存し続けるリスナーを組み立てる。
+
+    - document のキャプチャフェーズでリッスンするため、Streamlitの再描画で
+      スクロールコンテナ(section.stMain)自体が入れ替わっても捕捉し続けられる。
+    - window.parent にガードフラグ(__aiWriterArticleScrollInit)を立てて、
+      記事モードの再実行のたびにcomponents.htmlが新しいiframeを注入しても
+      リスナーが重複登録されないようにする。
+    - 記事モード用のアンカー(#article-top)がDOMに無いとき（＝今は他モードを
+      見ているとき）は保存しない。リスナー自体はwindow.parentに一度だけ
+      付いたまま残るが、他モード表示中のスクロールでは保存対象にならない。
+    """
+    safe_key = json.dumps(ARTICLE_SCROLL_STORAGE_KEY)
+    safe_anchor = json.dumps(ARTICLE_TOP_ANCHOR_ID)
+    return f"""<script>
+(function() {{
+    var win = window.parent || window;
+    var doc = win.document;
+    if (win.__aiWriterArticleScrollInit) {{ return; }}
+    win.__aiWriterArticleScrollInit = true;
+
+    var KEY = {safe_key};
+    var ANCHOR_ID = {safe_anchor};
+    var saveTimer = null;
+
+    doc.addEventListener('scroll', function(ev) {{
+        var target = ev.target;
+        if (!target || !target.matches || !target.matches('section.stMain')) {{ return; }}
+        if (!doc.getElementById(ANCHOR_ID)) {{ return; }}
+        if (saveTimer) {{ win.clearTimeout(saveTimer); }}
+        saveTimer = win.setTimeout(function() {{
+            try {{ win.sessionStorage.setItem(KEY, String(target.scrollTop)); }} catch (e) {{}}
+        }}, 150);
+    }}, true);
+}})();
+</script>"""
+
+
+def _build_article_scroll_restore_script_html(nonce: str = "") -> str:
+    """
+    直前にsessionStorageへ保存していた記事モードのスクロール位置へ、
+    一度だけ復帰するスクリプトを組み立てる。
+
+    - URL hash（画面移動サポートのアンカーリンクなど）が付いているときは
+      ユーザーの明示的な移動操作を優先し、何もしない。
+    - nonceはcomponents.htmlへ渡すHTML文字列を毎回変える目的専用の値。
+      前回と完全に同じHTMLだとブラウザがiframeの再読み込み（＝script再実行）
+      を省略する場合があるため、呼び出しのたびに変えて確実に再実行させる。
+    """
+    safe_key = json.dumps(ARTICLE_SCROLL_STORAGE_KEY)
+    safe_nonce = html.escape(str(nonce or ""), quote=True)
+    return f"""<!-- nonce:{safe_nonce} -->
+<script>
+(function() {{
+    var win = window.parent || window;
+    var doc = win.document;
+    if (win.location && win.location.hash) {{ return; }}
+
+    var KEY = {safe_key};
+    var raw = null;
+    try {{ raw = win.sessionStorage.getItem(KEY); }} catch (e) {{ return; }}
+    if (raw === null || raw === "") {{ return; }}
+
+    var y = parseInt(raw, 10);
+    if (isNaN(y)) {{ return; }}
+
+    // 記事モードの中身はこのスクリプト実行後も描画が続いているため、
+    // 1回だけの代入だと途中までの高さしか無くscrollTopが頭打ちになる。
+    // レイアウトが落ち着くまで、時間を空けて複数回代入し直す。
+    function applyScroll() {{
+        var el = doc.querySelector('section.stMain');
+        if (el) {{ el.scrollTop = y; }}
+    }}
+    applyScroll();
+    win.setTimeout(applyScroll, 50);
+    win.setTimeout(applyScroll, 200);
+    win.setTimeout(applyScroll, 500);
+    win.setTimeout(applyScroll, 1000);
+}})();
+</script>"""
+
+
+def _render_article_scroll_tracker() -> None:
+    components.html(_build_article_scroll_tracker_script_html(), height=0)
+
+
+def _render_article_scroll_restore() -> None:
+    nonce = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    components.html(_build_article_scroll_restore_script_html(nonce=nonce), height=0)
+
+
 def _build_planning_prompt() -> str:
     _sync_evidence_text_from_parts()
 
@@ -2176,6 +2277,9 @@ def _render_detail_settings() -> None:
             # st.success はレイアウトの高さを押し下げてスクロール位置がずれやすいため、
             # 高さに影響しない st.toast で反映完了を伝える。
             st.toast("詳細設定を反映しました。")
+            # 反映直後は直前に保存していたスクロール位置へ復帰を試みる
+            # （根本原因が未解明の押下時ジャンプに対する、最善努力の補正）。
+            _render_article_scroll_restore()
 
         split_mode_on = _has_any_split_evidence_input()
         legacy_evidence_text = str(st.session_state.get(KEYS["evidence"], "") or "").strip()
@@ -2241,11 +2345,21 @@ def render_article_ui(
     logs_dir: str,
     openai_api_key: str,
     use_real_api: bool,
+    just_entered_menu: bool = False,
 ) -> None:
     _ = logs_dir
     _ensure_keys_initialized()
     _ensure_article_input_backup()
     _restore_article_inputs_from_backup()
+
+    # 記事モードの現在のスクロール位置を継続的にsessionStorageへ保存する
+    # リスナーを（未登録なら）仕込む。just_entered_menuがTrueのときだけ、
+    # ホームなど他モードから記事モードへ戻ってきた直後の1回に限り、
+    # 保存していた位置へ復帰する。通常の入力中の再実行では復帰処理を
+    # 呼ばないため、余計なスクロール移動は起きない。
+    _render_article_scroll_tracker()
+    if just_entered_menu:
+        _render_article_scroll_restore()
 
     _render_sensitive_notice_box()
 

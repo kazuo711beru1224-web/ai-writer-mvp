@@ -819,12 +819,24 @@ def _render_sidebar() -> str:
     return str(st.session_state.get("app__menu") or MENU_HOME)
 
 
+def _consume_menu_transition(menu: str) -> bool:
+    """
+    直前に描画したメニューと今回のメニューを比べ、今回はじめてこのメニューに
+    入った回だけTrueを返す。記事モードのスクロール位置復帰を「入り直した
+    ときの1回だけ」に限定するために使う（tmp__prefixのため自動保存対象外）。
+    """
+    prev = str(st.session_state.get("tmp__last_rendered_menu") or "")
+    st.session_state["tmp__last_rendered_menu"] = menu
+    return prev != menu
+
+
 def _render_current_page(menu: str) -> None:
     common_kwargs = {
         "outputs_dir": str(OUTPUTS_DIR),
         "logs_dir": str(LOGS_DIR),
         "openai_api_key": str(st.session_state.get("openai_api_key") or ""),
         "use_real_api": bool(st.session_state.get("use_real_api")),
+        "just_entered_menu": _consume_menu_transition(menu),
     }
 
     if menu == MENU_HOME:
