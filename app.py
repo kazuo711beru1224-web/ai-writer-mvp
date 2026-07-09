@@ -777,6 +777,9 @@ def _render_sidebar() -> str:
         )
         if chosen != current_menu:
             st.session_state["menu_request"] = chosen
+            # メニュー切替のrerunでmain()末尾の自動保存まで到達できなくなるため、
+            # 切替直前にここで自動保存しておく（記事モード入力の取りこぼし防止）。
+            _autosave_state(LOGS_DIR)
             st.rerun()
 
         if current_menu == MENU_OFFICIAL:

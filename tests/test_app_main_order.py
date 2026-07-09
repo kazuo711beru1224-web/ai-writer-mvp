@@ -25,3 +25,15 @@ def test_backup_save_and_autosave_still_run_after_render_current_page():
 
     assert render_pos < backup_save_pos
     assert render_pos < autosave_pos
+
+
+def test_sidebar_autosaves_before_menu_switch_rerun():
+    # メニュー切替はst.rerun()でその場に打ち切られ、main()末尾の自動保存まで
+    # 到達しない。切替直前の入力を取りこぼさないよう、rerun()の前に
+    # 自動保存を挟んでいることの回帰確認。
+    source = inspect.getsource(app._render_sidebar)
+
+    autosave_pos = source.index("_autosave_state(LOGS_DIR)")
+    rerun_pos = source.index("st.rerun()")
+
+    assert autosave_pos < rerun_pos

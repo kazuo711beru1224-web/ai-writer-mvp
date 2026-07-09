@@ -107,6 +107,27 @@ def test_autosave_file_does_not_contain_api_key(tmp_path):
     assert "openai_api_key" not in data
 
 
+def test_autosave_before_menu_switch_keeps_consult_inputs(tmp_path):
+    # メニュー切替でst.rerun()する直前にも自動保存するようになったため、
+    # 記事モード入力直後にホームへ移動しても内容が残ることの回帰確認。
+    _reset_session_state()
+    _set_full_article_state(
+        article__consult_situation="63歳会社員。給与28万円と賞与があり、年金がどう変わるか知りたい。",
+        article__consult_question="給与と賞与はどう合算されるか。",
+        article__main_kw="在職老齢年金",
+    )
+
+    app._autosave_state(tmp_path)
+
+    fp = tmp_path / app.AUTOSAVE_FILENAME
+    assert fp.exists()
+    saved = json.loads(fp.read_text(encoding="utf-8"))
+    assert saved["article__consult_situation"] == "63歳会社員。給与28万円と賞与があり、年金がどう変わるか知りたい。"
+    assert saved["article__consult_question"] == "給与と賞与はどう合算されるか。"
+    assert saved["article__main_kw"] == "在職老齢年金"
+    assert "openai_api_key" not in saved
+
+
 def test_autosave_noop_when_article_fields_all_blank(tmp_path):
     _reset_session_state()
     _set_full_article_state()  # 全項目が空
