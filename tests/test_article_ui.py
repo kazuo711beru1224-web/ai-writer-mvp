@@ -107,6 +107,24 @@ def test_scroll_tracker_script_only_saves_while_article_anchor_present():
     assert "getElementById(ANCHOR_ID)" in html_out
 
 
+def test_scroll_tracker_script_rechecks_anchor_inside_debounce_timeout():
+    # 記事モードを離れた直後にscroll debounceタイマー（150ms）が残っている
+    # と、発火時点では他モードに切り替わっていることがある。保存イベント
+    # 発生時だけでなく、setTimeoutコールバック内の保存直前にも
+    # getElementById(ANCHOR_ID)を再チェックし、他モードのscrollTopが
+    # article用sessionStorageへ紛れ込まないことを確認する。
+    html_out = _build_article_scroll_tracker_script_html()
+
+    setTimeout_idx = html_out.index("win.setTimeout(function()")
+    set_item_idx = html_out.index("sessionStorage.setItem")
+    recheck_idx = html_out.index(
+        "if (!doc.getElementById(ANCHOR_ID)) { return; }", setTimeout_idx
+    )
+
+    assert setTimeout_idx < recheck_idx < set_item_idx
+    assert html_out.count("getElementById(ANCHOR_ID)") >= 2
+
+
 def test_scroll_tracker_script_listens_on_document_capture_phase():
     # section.stMain がStreamlitの再描画で入れ替わっても捕捉し続けられるよう、
     # documentのキャプチャフェーズでリッスンしていることを確認する。
@@ -126,6 +144,75 @@ def test_scroll_restore_script_skips_when_url_hash_present():
     assert "location.hash" in html_out
 
 
+def test_scroll_restore_script_clears_any_hash_while_in_article_mode():
+    # Streamlit本体の見出しアンカー機能（script完了300ms後のscrollIntoView）を
+    # 空振りさせるため、記事モード表示中（ANCHOR_IDがDOMに存在する）なら、
+    # 既知アンカーかどうかに関わらずhashをhistory.replaceStateで消費して
+    # クリアすることを確認する。
+    html_out = _build_article_scroll_restore_script_html(nonce="1")
+
+    assert "history.replaceState" in html_out
+    hash_block_idx = html_out.index("if (hashId) {")
+    anchor_check_idx = html_out.index(
+        "if (doc.getElementById(ANCHOR_ID)) {", hash_block_idx
+    )
+    replace_state_idx = html_out.index("history.replaceState", anchor_check_idx)
+
+    assert hash_block_idx < anchor_check_idx < replace_state_idx
+
+
+def test_scroll_restore_script_hash_clear_is_scoped_to_article_anchor_presence():
+    # hashクリアはANCHOR_ID(article-top)がDOM上に存在するとき（＝記事モード
+    # 表示中）に限定し、他モードの画面移動サポートのhashを誤って消費しない
+    # よう防御していることを確認する。
+    html_out = _build_article_scroll_restore_script_html(nonce="1")
+
+    assert ARTICLE_TOP_ANCHOR_ID in html_out
+    assert "var ANCHOR_ID" in html_out
+
+
+def test_scroll_restore_script_returns_after_hash_clear_by_default():
+    # restore_even_if_hash_consumed未指定（既定False）のときは、hashクリア後も
+    # 従来通りreturnし、その回はsessionStorage復帰を行わないことを確認する。
+    # 他モードから記事モードへ戻るjust_entered_menu側の呼び出しはこの既定の
+    # ままにして、直前の画面移動サポートのアンカー移動を一度だけ尊重する。
+    html_out = _build_article_scroll_restore_script_html(nonce="1")
+
+    hash_block_idx = html_out.index("if (hashId) {")
+    close_brace_idx = html_out.index("\n    }\n\n    var KEY", hash_block_idx)
+    hash_block = html_out[hash_block_idx:close_brace_idx]
+
+    assert "RESTORE_EVEN_IF_HASH_CONSUMED = false" in html_out
+    assert "if (!RESTORE_EVEN_IF_HASH_CONSUMED) { return; }" in hash_block
+
+
+def test_scroll_restore_script_continues_to_session_storage_when_hash_consumed_flag_set():
+    # restore_even_if_hash_consumed=Trueのときは、hashクリア後もreturnせず
+    # sessionStorage復帰処理へ続けることを確認する（反映ボタン押下側の呼び出し用）。
+    html_out = _build_article_scroll_restore_script_html(
+        nonce="1", restore_even_if_hash_consumed=True
+    )
+
+    assert "RESTORE_EVEN_IF_HASH_CONSUMED = true" in html_out
+
+    hash_block_idx = html_out.index("if (hashId) {")
+    session_storage_idx = html_out.index("sessionStorage.getItem", hash_block_idx)
+    return_idx = html_out.find("if (!RESTORE_EVEN_IF_HASH_CONSUMED) { return; }", hash_block_idx)
+
+    # ガード自体はJS内に存在するが、フラグがtrueのため実行時にはreturnせず
+    # sessionStorage復帰コードへ到達できる並び（return文がguardの中に留まり、
+    # sessionStorage.getItemがそれより後方に存在する）になっていることを確認する。
+    assert 0 <= return_idx < session_storage_idx
+
+
+def test_scroll_restore_script_pauses_tracker_saves_after_running():
+    # 復帰スクリプトがscrollTopを動かした直後、trackerがそのプログラム由来の
+    # 位置を保存し直さないよう、一時停止フラグを立てることを確認する。
+    html_out = _build_article_scroll_restore_script_html(nonce="1")
+
+    assert "__aiWriterArticleScrollPauseUntil" in html_out
+
+
 def test_scroll_restore_script_reads_the_same_storage_key_as_tracker():
     html_out = _build_article_scroll_restore_script_html(nonce="1")
 
@@ -138,6 +225,15 @@ def test_scroll_restore_script_differs_by_nonce_to_force_iframe_reload():
     html_2 = _build_article_scroll_restore_script_html(nonce="2")
 
     assert html_1 != html_2
+
+
+def test_scroll_tracker_script_skips_save_while_restore_pause_is_active():
+    # 復帰スクリプトが立てた一時停止フラグの間は、tracker側がsessionStorageへの
+    # 保存をスキップすることを確認する。
+    html_out = _build_article_scroll_tracker_script_html()
+
+    assert "__aiWriterArticleScrollPauseUntil" in html_out
+    assert "Date.now() < win.__aiWriterArticleScrollPauseUntil" in html_out
 
 
 def test_scroll_restore_script_escapes_nonce_value():

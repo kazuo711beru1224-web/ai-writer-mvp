@@ -1629,6 +1629,11 @@ def _render_copy_button(text: str, label: str) -> None:
 ARTICLE_SCROLL_STORAGE_KEY = "ai_writer_scroll_article"
 ARTICLE_TOP_ANCHOR_ID = "article-top"
 
+# 復帰スクリプトがアンカー消費やsessionStorage復帰でscrollTopを書き換えた
+# 直後、その結果をtrackerがユーザー操作と誤認して保存し直さないよう、
+# 保存を一時停止する猶予時間（ミリ秒）。
+ARTICLE_SCROLL_SAVE_PAUSE_MS = 800
+
 
 def _build_article_scroll_tracker_script_html() -> str:
     """
@@ -1643,6 +1648,16 @@ def _build_article_scroll_tracker_script_html() -> str:
     - 記事モード用のアンカー(#article-top)がDOMに無いとき（＝今は他モードを
       見ているとき）は保存しない。リスナー自体はwindow.parentに一度だけ
       付いたまま残るが、他モード表示中のスクロールでは保存対象にならない。
+    - このANCHOR_ID判定はscrollイベント発生時（setTimeoutの予約時点）だけで
+      なく、150ms後の保存直前にも再チェックする。記事モードを離れた直後の
+      debounce待ちタイマーがそのまま残っていると、150ms後に発火した時点では
+      既に他モードへ切り替わっていることがあり（section.stMainはモードを
+      跨いで使い回される同一要素のため、ev.target.scrollTopはその時点の
+      ライブな値を返してしまう）、保存直前の再チェックが無いと他モードの
+      scrollTopがarticle用sessionStorageキーへ紛れ込む。
+    - 復帰スクリプト側がwin.__aiWriterArticleScrollPauseUntilを立てている間
+      （＝アンカー消費やsessionStorage復帰でプログラムがscrollTopを動かした
+      直後）は、そのプログラム由来の位置を保存しない。
     """
     safe_key = json.dumps(ARTICLE_SCROLL_STORAGE_KEY)
     safe_anchor = json.dumps(ARTICLE_TOP_ANCHOR_ID)
@@ -1663,6 +1678,8 @@ def _build_article_scroll_tracker_script_html() -> str:
         if (!doc.getElementById(ANCHOR_ID)) {{ return; }}
         if (saveTimer) {{ win.clearTimeout(saveTimer); }}
         saveTimer = win.setTimeout(function() {{
+            if (!doc.getElementById(ANCHOR_ID)) {{ return; }}
+            if (win.__aiWriterArticleScrollPauseUntil && Date.now() < win.__aiWriterArticleScrollPauseUntil) {{ return; }}
             try {{ win.sessionStorage.setItem(KEY, String(target.scrollTop)); }} catch (e) {{}}
         }}, 150);
     }}, true);
@@ -1670,25 +1687,86 @@ def _build_article_scroll_tracker_script_html() -> str:
 </script>"""
 
 
-def _build_article_scroll_restore_script_html(nonce: str = "") -> str:
+def _build_article_scroll_restore_script_html(
+    nonce: str = "",
+    *,
+    restore_even_if_hash_consumed: bool = False,
+) -> str:
     """
     直前にsessionStorageへ保存していた記事モードのスクロール位置へ、
     一度だけ復帰するスクリプトを組み立てる。
 
-    - URL hash（画面移動サポートのアンカーリンクなど）が付いているときは
-      ユーザーの明示的な移動操作を優先し、何もしない。
+    - 記事モード表示中（ANCHOR_ID=article-topがDOMに存在する）にrestoreが
+      動く場合、URL hashが残っていれば、既知アンカーかどうかに関わらず
+      history.replaceStateで消費してクリアする。Streamlit本体の見出し
+      アンカー機能（HeadingWithActionElements）は、script完了の300ms後に
+      window.location.hashが自分の見出しidと一致していればscrollIntoView
+      を試みるため、hashを空にしておくことでこの判定自体を空振りさせ、
+      sessionStorage復帰後に後から位置を上書きされるのを防ぐ。
+    - hashクリアはANCHOR_IDがDOM上に存在するとき（＝記事モード表示中）に
+      限定する。restoreスクリプトは記事モードからしか呼ばれない前提だが、
+      念のため他モードの画面移動サポートのhashを誤って消費しないよう防御する。
+    - 画面移動サポートのリンクは通常の<a href="#...">によるブラウザ標準の
+      アンカー移動であり、クリックした時点でStreamlitのrerunは発生しない
+      （componentsのiframeも再実行されない）。このスクリプトが次回呼ばれる
+      までにはブラウザのジャンプは既に完了しているため、hashクリアは
+      画面移動サポート自体の動作を妨げない。
+    - restore_even_if_hash_consumed=False（既定）の場合、hashが残っていた
+      回はhashクリアのみで終え、これまで通りsessionStorage復帰は行わない。
+      他モードから記事モードへ戻った直後（just_entered_menu）の呼び出しは
+      この既定のままにし、直前の画面移動サポートのアンカー移動を一度だけ
+      尊重する挙動を維持する。
+    - restore_even_if_hash_consumed=True の場合、hashクリア後もreturnせず
+      そのままsessionStorage復帰処理へ進む。画面移動サポートのリンクは
+      クリック時点でStreamlitのrerunを伴わないため、このスクリプトが動く
+      回はいずれもリンククリックそのものとは無関係なrerunであり、続けて
+      sessionStorage復帰を行ってもクリック直後の移動操作を打ち消さない。
+      「この確認先を下書きに反映する」ボタン押下後の呼び出しに使う想定
+      （フォーム送信後にStreamlit本体がボタンへフォーカスを戻す際、
+      preventScroll指定が無くブラウザが自動スクロールしてしまう分を
+      sessionStorage復帰で補正するため）。
+    - hash消費後・sessionStorage復帰後のいずれも、直後に
+      win.__aiWriterArticleScrollPauseUntilを立てて、tracker側が
+      このプログラム由来のscrollTopを保存し直さないようにする。
     - nonceはcomponents.htmlへ渡すHTML文字列を毎回変える目的専用の値。
       前回と完全に同じHTMLだとブラウザがiframeの再読み込み（＝script再実行）
       を省略する場合があるため、呼び出しのたびに変えて確実に再実行させる。
     """
     safe_key = json.dumps(ARTICLE_SCROLL_STORAGE_KEY)
     safe_nonce = html.escape(str(nonce or ""), quote=True)
+    safe_anchor = json.dumps(ARTICLE_TOP_ANCHOR_ID)
+    safe_restore_even_if_hash_consumed = json.dumps(bool(restore_even_if_hash_consumed))
+    pause_ms = int(ARTICLE_SCROLL_SAVE_PAUSE_MS)
     return f"""<!-- nonce:{safe_nonce} -->
 <script>
 (function() {{
     var win = window.parent || window;
     var doc = win.document;
-    if (win.location && win.location.hash) {{ return; }}
+
+    function pauseTrackerSaves() {{
+        win.__aiWriterArticleScrollPauseUntil = Date.now() + {pause_ms};
+    }}
+    pauseTrackerSaves();
+
+    var ANCHOR_ID = {safe_anchor};
+    var RESTORE_EVEN_IF_HASH_CONSUMED = {safe_restore_even_if_hash_consumed};
+    var rawHash = (win.location && win.location.hash) ? String(win.location.hash) : "";
+    var hashId = rawHash.indexOf('#') === 0 ? rawHash.slice(1) : rawHash;
+
+    if (hashId) {{
+        if (doc.getElementById(ANCHOR_ID)) {{
+            // 記事モード表示中は、既知アンカーかどうかに関わらずhashを消費して
+            // クリアする。残したままだとStreamlit本体の見出しアンカー機能が
+            // script完了の300ms後にscrollIntoViewを発火させ、sessionStorage
+            // 復帰後の位置を後から上書きすることがあるため。
+            try {{
+                if (win.history && win.history.replaceState) {{
+                    win.history.replaceState(null, '', win.location.pathname + win.location.search);
+                }}
+            }} catch (e) {{}}
+        }}
+        if (!RESTORE_EVEN_IF_HASH_CONSUMED) {{ return; }}
+    }}
 
     var KEY = {safe_key};
     var raw = null;
@@ -1704,6 +1782,7 @@ def _build_article_scroll_restore_script_html(nonce: str = "") -> str:
     function applyScroll() {{
         var el = doc.querySelector('section.stMain');
         if (el) {{ el.scrollTop = y; }}
+        pauseTrackerSaves();
     }}
     applyScroll();
     win.setTimeout(applyScroll, 50);
@@ -1718,9 +1797,15 @@ def _render_article_scroll_tracker() -> None:
     components.html(_build_article_scroll_tracker_script_html(), height=0)
 
 
-def _render_article_scroll_restore() -> None:
+def _render_article_scroll_restore(*, restore_even_if_hash_consumed: bool = False) -> None:
     nonce = datetime.now().strftime("%Y%m%d%H%M%S%f")
-    components.html(_build_article_scroll_restore_script_html(nonce=nonce), height=0)
+    components.html(
+        _build_article_scroll_restore_script_html(
+            nonce=nonce,
+            restore_even_if_hash_consumed=restore_even_if_hash_consumed,
+        ),
+        height=0,
+    )
 
 
 def _build_planning_prompt() -> str:
@@ -2277,9 +2362,11 @@ def _render_detail_settings() -> None:
             # st.success はレイアウトの高さを押し下げてスクロール位置がずれやすいため、
             # 高さに影響しない st.toast で反映完了を伝える。
             st.toast("詳細設定を反映しました。")
-            # 反映直後は直前に保存していたスクロール位置へ復帰を試みる
-            # （根本原因が未解明の押下時ジャンプに対する、最善努力の補正）。
-            _render_article_scroll_restore()
+            # 反映直後は直前に保存していたスクロール位置へ復帰を試みる。
+            # フォーム送信後にStreamlit本体がボタンへフォーカスを戻す際、
+            # preventScroll指定が無くブラウザが自動スクロールしてしまう分を
+            # 補正するため、hashが残っていてもクリア後に必ず復帰まで進める。
+            _render_article_scroll_restore(restore_even_if_hash_consumed=True)
 
         split_mode_on = _has_any_split_evidence_input()
         legacy_evidence_text = str(st.session_state.get(KEYS["evidence"], "") or "").strip()
