@@ -12,7 +12,13 @@ import streamlit as st
 # =========================
 # 画面モジュール
 # =========================
-from modules.article_ui import ARTICLE_SCROLL_REQUEST_KEY, render_article_ui
+from modules.article_ui import (
+    ARTICLE_ACTIVE_STEP_KEY,
+    ARTICLE_SCROLL_REQUEST_KEY,
+    ARTICLE_STEP_GENERATE,
+    ARTICLE_STEP_INPUT,
+    render_article_ui,
+)
 from modules.home_ui import render_home_ui
 from modules.quality_ui import render_quality_ui
 from modules.official_procedure_ui import render_official_procedure_ui
@@ -796,26 +802,31 @@ def _render_sidebar() -> str:
         if current_menu == MENU_ARTICLE:
             st.divider()
             st.markdown("### \U0001f9ed \u753b\u9762\u79fb\u52d5\u30b5\u30dd\u30fc\u30c8")
-            st.caption("\u8a18\u4e8b\u30e2\u30fc\u30c9\u5185\u306e\u898b\u305f\u3044\u5834\u6240\u3078\u79fb\u52d5\u3067\u304d\u307e\u3059\u3002")
+            st.caption("\u8a18\u4e8b\u30e2\u30fc\u30c9\u306f\u300c\u5165\u529b\u30fb\u8a2d\u5b9a\u300d\u300c\u751f\u6210\u30fb\u78ba\u8a8d\u30fb\u4fdd\u5b58\u300d\u306e2\u30b9\u30c6\u30c3\u30d7\u306b\u5206\u304b\u308c\u3066\u3044\u307e\u3059\u3002")
             # \u4ee5\u524d\u306ehref\u30a2\u30f3\u30ab\u30fc\u65b9\u5f0f\u306f\u3001\u30af\u30ea\u30c3\u30af\u6642\u306eJS\u304c\u5931\u6557\u3059\u308b\u3068
             # \u30d6\u30e9\u30a6\u30b6\u306e\u6a19\u6e96\u30a2\u30f3\u30ab\u30fc\u9077\u79fb\u304c\u767a\u751f\u3057\u3066URL hash\u304c\u6b8b\u3063\u3066\u3057\u307e\u3063\u305f
             # \uff08\u672c\u756a\u3067\u5b9f\u969b\u306b\u767a\u751f\u3057\u305f\uff09\u3002st.button\u306fhref/hash\u3092\u4e00\u5207\u4f7f\u308f\u305a\u3001
             # \u62bc\u3055\u308c\u305f\u3089session_state\u7d4c\u7531\u3067\u79fb\u52d5\u5148ID\u3092\u6e21\u3059\u3060\u3051\u306a\u306e\u3067\u3001
             # JS\u306e\u6210\u5426\u306b\u95a2\u4fc2\u306a\u304fhash\u306f\u4e00\u5207\u767a\u751f\u3057\u306a\u3044\u3002
-            for target_id, label in (
-                ("article-top", "\u3053\u306e\u753b\u9762\u306e\u5148\u982d\u3078"),
-                ("article-current", "1. \u4eca\u306e\u72b6\u6cc1\u3078"),
-                ("article-question", "2. \u77e5\u308a\u305f\u3044\u3053\u3068\u3078"),
-                ("article-keyword", "3. \u691c\u7d22\u30ad\u30fc\u30ef\u30fc\u30c9\u3078"),
-                ("article-edit-text", "\u516c\u958b\u524d\u306b\u76f4\u3059\u672c\u6587\u3078"),
-                ("article-actions", "AI\u78ba\u8a8d\u30fb\u4fdd\u5b58\u30dc\u30bf\u30f3\u3078"),
-                ("article-edited-result", "\u7de8\u96c6\u5f8c\u306e\u78ba\u8a8d\u7d50\u679c\u3078"),
+            #
+            # 2\u30b9\u30c6\u30c3\u30d7UI\u5316\u306b\u4f34\u3044\u3001\u30a2\u30f3\u30ab\u30fc\u5148\u304c\u73fe\u5728\u306e\u30b9\u30c6\u30c3\u30d7\u306b
+            # \u5b58\u5728\u3057\u306a\u3044\u3068scrollIntoView\u304c\u4f55\u3082\u3057\u306a\u3044\u305f\u3081\u3001\u30dc\u30bf\u30f3\u62bc\u4e0b\u6642\u306b
+            # \u5bfe\u5fdc\u3059\u308bactive_step\u3082\u5408\u308f\u305b\u3066\u5207\u308a\u66ff\u3048\u308b\u3002
+            for target_id, label, target_step in (
+                ("article-top", "\u3053\u306e\u753b\u9762\u306e\u5148\u982d\u3078", ARTICLE_STEP_INPUT),
+                ("article-current", "1. \u4eca\u306e\u72b6\u6cc1\u3078", ARTICLE_STEP_INPUT),
+                ("article-question", "2. \u77e5\u308a\u305f\u3044\u3053\u3068\u3078", ARTICLE_STEP_INPUT),
+                ("article-keyword", "3. \u691c\u7d22\u30ad\u30fc\u30ef\u30fc\u30c9\u3078", ARTICLE_STEP_INPUT),
+                ("article-edit-text", "\u516c\u958b\u524d\u306b\u76f4\u3059\u672c\u6587\u3078", ARTICLE_STEP_GENERATE),
+                ("article-actions", "AI\u78ba\u8a8d\u30fb\u4fdd\u5b58\u30dc\u30bf\u30f3\u3078", ARTICLE_STEP_GENERATE),
+                ("article-edited-result", "\u7de8\u96c6\u5f8c\u306e\u78ba\u8a8d\u7d50\u679c\u3078", ARTICLE_STEP_GENERATE),
             ):
                 if st.button(
                     label,
                     key=f"article_nav__{target_id}",
                     use_container_width=True,
                 ):
+                    st.session_state[ARTICLE_ACTIVE_STEP_KEY] = target_step
                     st.session_state[ARTICLE_SCROLL_REQUEST_KEY] = target_id
 
 

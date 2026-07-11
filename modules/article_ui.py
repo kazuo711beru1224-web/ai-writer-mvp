@@ -182,6 +182,52 @@ DETAIL_OPEN_KEY = "article__detail_open"
 # ここだけで完結する独立フラグで管理する。
 REFERENCE_HINT_OPEN_KEY = "article__show_reference_hint"
 
+# 記事モードのステップ型UI（長い1ページ型のスクロールをやめ、ボタンで
+# 表示区画を切り替えるための現在地）。値は入力保存の対象ではなく画面表示
+# だけの状態なので、PERSIST_KEYSには含めない（get_article_persist_keys参照）。
+ARTICLE_ACTIVE_STEP_KEY = "article__active_step"
+ARTICLE_STEP_INPUT = 1
+ARTICLE_STEP_GENERATE = 2
+
+
+def _ensure_active_step_initialized() -> None:
+    if ARTICLE_ACTIVE_STEP_KEY not in st.session_state:
+        st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_INPUT
+
+
+def _go_to_input_step() -> None:
+    st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_INPUT
+
+
+def _go_to_generate_step() -> None:
+    st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_GENERATE
+
+
+def _render_step_indicator() -> None:
+    step = st.session_state.get(ARTICLE_ACTIVE_STEP_KEY, ARTICLE_STEP_INPUT)
+    if step == ARTICLE_STEP_GENERATE:
+        st.caption("📍 ステップ 2/2：生成・確認・保存")
+    else:
+        st.caption("📍 ステップ 1/2：入力・設定")
+
+
+def _render_step_nav_buttons(*, position: str) -> None:
+    step = st.session_state.get(ARTICLE_ACTIVE_STEP_KEY, ARTICLE_STEP_INPUT)
+    if step == ARTICLE_STEP_GENERATE:
+        st.button(
+            "← 入力・設定へ戻る",
+            key=f"btn_article_step_back_{position}",
+            use_container_width=True,
+            on_click=_go_to_input_step,
+        )
+    else:
+        st.button(
+            "次へ：生成・確認へ →",
+            key=f"btn_article_step_next_{position}",
+            use_container_width=True,
+            on_click=_go_to_generate_step,
+        )
+
 
 def _ensure_detail_open_initialized() -> None:
     if DETAIL_OPEN_KEY not in st.session_state:
@@ -435,6 +481,7 @@ def _ensure_keys_initialized() -> None:
 
     _ensure_ui_flags_initialized()
     _ensure_detail_open_initialized()
+    _ensure_active_step_initialized()
     _migrate_legacy_keys_once()
 
 
@@ -2537,12 +2584,38 @@ def render_article_ui(
 
     st.divider()
 
-    _render_standard_inputs()
-    _render_detail_settings()
+    # 記事モードのステップ型UI：長い1ページ型のスクロールをやめ、
+    # 「① 入力・設定」「② 生成・確認・保存」の2区画をボタンで切り替える。
+    # 入力値はどちらの区画でも同じsession_state(KEYS)を参照するため、
+    # ステップを移動しても入力内容は消えない。
+    active_step = st.session_state.get(ARTICLE_ACTIVE_STEP_KEY, ARTICLE_STEP_INPUT)
+    _render_step_indicator()
+    _render_step_nav_buttons(position="top")
+    st.divider()
+
+    if active_step == ARTICLE_STEP_INPUT:
+        _render_standard_inputs()
+        _render_detail_settings()
+    else:
+        _render_generate_step(
+            outputs_dir=outputs_dir,
+            openai_api_key=openai_api_key,
+            use_real_api=use_real_api,
+        )
 
     st.divider()
+    _render_step_nav_buttons(position="bottom")
+    _backup_article_inputs()
+
+
+def _render_generate_step(
+    *,
+    outputs_dir: str,
+    openai_api_key: str,
+    use_real_api: bool,
+) -> None:
     st.write("入力した内容をもとに、記事の下書きを作ります。あとで見直せるので、まずは出してみる感覚で大丈夫です。")
-    st.caption("確認先を入力した場合は、先に詳細設定の反映ボタンを押してください。")
+    st.caption("確認先を入力した場合は、先に『① 入力・設定へ戻る』で詳細設定の反映ボタンを押してください。")
 
     if st.button("✨ 下書きを作る", use_container_width=True, key="btn_article_generate"):
         situation = str(st.session_state.get(KEYS["consult_situation"], "") or "").strip()
@@ -2834,4 +2907,3 @@ def render_article_ui(
                         preview_chars=PREVIEW_CHARS_SUGGEST,
                         button_key_suffix="transparency_proof_memo",
                     )
-    _backup_article_inputs()

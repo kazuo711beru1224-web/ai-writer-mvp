@@ -2,6 +2,7 @@ import inspect
 
 import streamlit as st
 
+import modules.article_ui as article_ui
 from modules.article_ui import (
     _build_article_scroll_restore_script_html,
     _build_article_scroll_to_target_script_html,
@@ -11,9 +12,13 @@ from modules.article_ui import (
     _render_reference_hint_section,
     get_article_persist_keys,
     render_article_ui,
+    ARTICLE_ACTIVE_STEP_KEY,
     ARTICLE_SCROLL_REQUEST_KEY,
     ARTICLE_SCROLL_STORAGE_KEY,
+    ARTICLE_STEP_GENERATE,
+    ARTICLE_STEP_INPUT,
     ARTICLE_TOP_ANCHOR_ID,
+    KEYS,
     REFERENCE_HINT_OPEN_KEY,
     UI_FLAG_KEYS,
 )
@@ -343,3 +348,129 @@ def test_render_article_ui_still_calls_scroll_to_target():
 
     assert "_render_article_scroll_to_target(" in active_source
     assert "ARTICLE_SCROLL_REQUEST_KEY" in active_source
+
+
+# =========================
+# 記事モードのステップ型UI（2分割）
+# =========================
+
+def _common_kwargs():
+    return dict(outputs_dir="out", logs_dir="logs", openai_api_key="", use_real_api=False)
+
+
+def test_article_active_step_key_is_not_a_persisted_data_key():
+    # ステップ表示は画面状態であり記事データではないため、自動保存対象
+    # （get_article_persist_keys）には含めない設計であることを確認する。
+    assert ARTICLE_ACTIVE_STEP_KEY not in get_article_persist_keys()
+
+
+def test_article_active_step_defaults_to_input_step():
+    _reset_session_state()
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[ARTICLE_ACTIVE_STEP_KEY] == ARTICLE_STEP_INPUT
+    assert ARTICLE_STEP_INPUT == 1
+
+
+def test_input_step_renders_standard_inputs_and_detail_settings_only(monkeypatch):
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_INPUT
+
+    calls = []
+    monkeypatch.setattr(article_ui, "_render_standard_inputs", lambda: calls.append("standard"))
+    monkeypatch.setattr(article_ui, "_render_detail_settings", lambda: calls.append("detail"))
+    monkeypatch.setattr(article_ui, "_render_generate_step", lambda **kw: calls.append("generate"))
+
+    render_article_ui(**_common_kwargs())
+
+    assert calls == ["standard", "detail"]
+
+
+def test_generate_step_renders_generate_step_only(monkeypatch):
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_GENERATE
+
+    calls = []
+    monkeypatch.setattr(article_ui, "_render_standard_inputs", lambda: calls.append("standard"))
+    monkeypatch.setattr(article_ui, "_render_detail_settings", lambda: calls.append("detail"))
+    monkeypatch.setattr(article_ui, "_render_generate_step", lambda **kw: calls.append("generate"))
+
+    render_article_ui(**_common_kwargs())
+
+    assert calls == ["generate"]
+
+
+def test_go_to_step_helpers_switch_active_step():
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_INPUT
+
+    article_ui._go_to_generate_step()
+    assert st.session_state[ARTICLE_ACTIVE_STEP_KEY] == ARTICLE_STEP_GENERATE
+
+    article_ui._go_to_input_step()
+    assert st.session_state[ARTICLE_ACTIVE_STEP_KEY] == ARTICLE_STEP_INPUT
+
+
+def test_step_nav_buttons_bind_next_callback_on_input_step(monkeypatch):
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_INPUT
+
+    captured = {}
+
+    def fake_button(label, **kwargs):
+        captured["label"] = label
+        captured["on_click"] = kwargs.get("on_click")
+        return False
+
+    monkeypatch.setattr(st, "button", fake_button)
+    article_ui._render_step_nav_buttons(position="test")
+
+    assert "次へ" in captured["label"]
+    assert captured["on_click"] is article_ui._go_to_generate_step
+
+
+def test_step_nav_buttons_bind_back_callback_on_generate_step(monkeypatch):
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_GENERATE
+
+    captured = {}
+
+    def fake_button(label, **kwargs):
+        captured["label"] = label
+        captured["on_click"] = kwargs.get("on_click")
+        return False
+
+    monkeypatch.setattr(st, "button", fake_button)
+    article_ui._render_step_nav_buttons(position="test")
+
+    assert "戻る" in captured["label"]
+    assert captured["on_click"] is article_ui._go_to_input_step
+
+
+def test_input_values_survive_switching_between_steps():
+    # ステップを移動しても、既存のsession_state(KEYS)に入れた入力内容が
+    # 消えないことを確認する（新しい自動保存・復帰の仕組みは追加していない）。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_INPUT
+    st.session_state[KEYS["consult_situation"]] = "テスト用の状況"
+    st.session_state[KEYS["consult_question"]] = "テスト用の質問"
+
+    render_article_ui(**_common_kwargs())
+    assert st.session_state[KEYS["consult_situation"]] == "テスト用の状況"
+    assert st.session_state[KEYS["consult_question"]] == "テスト用の質問"
+
+    article_ui._go_to_generate_step()
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["consult_situation"]] == "テスト用の状況"
+    assert st.session_state[KEYS["consult_question"]] == "テスト用の質問"
+    assert st.session_state[ARTICLE_ACTIVE_STEP_KEY] == ARTICLE_STEP_GENERATE
+
+
+def test_render_generate_step_does_not_call_scroll_tracker_or_restore():
+    # ステップ2の中身を切り出した_render_generate_stepにも、自動スクロール
+    # 保存・自動復帰の呼び出しが紛れ込んでいないことを回帰確認する。
+    active_source = _active_code_lines(inspect.getsource(article_ui._render_generate_step))
+
+    assert "_render_article_scroll_tracker()" not in active_source
+    assert "_render_article_scroll_restore(" not in active_source
