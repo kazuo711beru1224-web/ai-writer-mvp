@@ -1,3 +1,5 @@
+import inspect
+
 import streamlit as st
 
 from modules.article_ui import (
@@ -8,6 +10,7 @@ from modules.article_ui import (
     _render_large_text_preview,
     _render_reference_hint_section,
     get_article_persist_keys,
+    render_article_ui,
     ARTICLE_SCROLL_REQUEST_KEY,
     ARTICLE_SCROLL_STORAGE_KEY,
     ARTICLE_TOP_ANCHOR_ID,
@@ -294,3 +297,49 @@ def test_article_scroll_request_key_is_not_a_persisted_data_key():
     # ではないため、自動保存の作業内容判定（get_article_persist_keys）には
     # 含めない設計であることを確認する。
     assert ARTICLE_SCROLL_REQUEST_KEY not in get_article_persist_keys()
+
+
+def _active_code_lines(source: str) -> str:
+    # コメントアウトされた呼び出し（無効化した保険コード）を除外し、
+    # 実際に実行されるコード行だけを対象に文字列アサーションするための補助。
+    return "\n".join(
+        line for line in source.splitlines() if not line.strip().startswith("#")
+    )
+
+
+def test_render_article_ui_does_not_call_scroll_tracker():
+    # 自動スクロール保存（tracker）は、入力・クリック等の通常操作で発生する
+    # 意図しないscrollイベントまで保存してしまい、本番Streamlit Cloudで
+    # 位置が勝手に動く不安定要因になっていたため、呼び出しをいったん停止する。
+    # 関数本体は削除せず残すが、render_article_ui()からは呼ばれないことを
+    # 回帰確認する（コメントアウトされた呼び出しは対象外）。
+    active_source = _active_code_lines(inspect.getsource(render_article_ui))
+
+    assert "_render_article_scroll_tracker()" not in active_source
+
+
+def test_render_article_ui_does_not_auto_call_scroll_restore():
+    # just_entered_menu時の自動復帰呼び出しが停止されていることを確認する
+    # （コメントアウトされた呼び出しは対象外）。
+    active_source = _active_code_lines(inspect.getsource(render_article_ui))
+
+    assert "_render_article_scroll_restore(" not in active_source
+
+
+def test_detail_settings_does_not_auto_call_scroll_restore_after_apply():
+    # 「この確認先を下書きに反映する」ボタン後の復帰呼び出しも停止されている
+    # ことを確認する（コメントアウトされた呼び出しは対象外）。
+    from modules.article_ui import _render_detail_settings
+
+    active_source = _active_code_lines(inspect.getsource(_render_detail_settings))
+
+    assert "_render_article_scroll_restore(" not in active_source
+
+
+def test_render_article_ui_still_calls_scroll_to_target():
+    # 画面移動サポートのst.button→session_state→scrollIntoViewの仕組みは
+    # 自動復帰停止の影響を受けず、引き続き呼ばれることを確認する。
+    active_source = _active_code_lines(inspect.getsource(render_article_ui))
+
+    assert "_render_article_scroll_to_target(" in active_source
+    assert "ARTICLE_SCROLL_REQUEST_KEY" in active_source

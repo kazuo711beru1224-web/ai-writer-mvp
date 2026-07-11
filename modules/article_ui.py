@@ -2427,11 +2427,9 @@ def _render_detail_settings() -> None:
             # st.success はレイアウトの高さを押し下げてスクロール位置がずれやすいため、
             # 高さに影響しない st.toast で反映完了を伝える。
             st.toast("詳細設定を反映しました。")
-            # 反映直後は直前に保存していたスクロール位置へ復帰を試みる。
-            # フォーム送信後にStreamlit本体がボタンへフォーカスを戻す際、
-            # preventScroll指定が無くブラウザが自動スクロールしてしまう分を
-            # 補正するため、hashが残っていてもクリア後に必ず復帰まで進める。
-            _render_article_scroll_restore(restore_even_if_hash_consumed=True)
+            # 自動スクロール復帰はいったん停止中（本番Streamlit Cloudで
+            # 入力・クリック中に意図しない位置へ飛ぶ不安定要因になっていたため）。
+            # _render_article_scroll_restore(restore_even_if_hash_consumed=True)
 
         split_mode_on = _has_any_split_evidence_input()
         legacy_evidence_text = str(st.session_state.get(KEYS["evidence"], "") or "").strip()
@@ -2504,18 +2502,16 @@ def render_article_ui(
     _ensure_article_input_backup()
     _restore_article_inputs_from_backup()
 
-    # 記事モードの現在のスクロール位置を継続的にsessionStorageへ保存する
-    # リスナーを（未登録なら）仕込む。just_entered_menuがTrueのときだけ、
-    # ホームなど他モードから記事モードへ戻ってきた直後の1回に限り、
-    # 保存していた位置へ復帰する。通常の入力中の再実行では復帰処理を
-    # 呼ばないため、余計なスクロール移動は起きない。
-    # hashが既に残っていても復帰処理自体は止めない
-    # （restore_even_if_hash_consumed=True）。画面移動サポートは
-    # href="#..."によるアンカー移動をやめたため、残存hashは常に過去の
-    # 汚れであり、直前のリンク操作を尊重する理由がもう無い。
-    _render_article_scroll_tracker()
-    if just_entered_menu:
-        _render_article_scroll_restore(restore_even_if_hash_consumed=True)
+    # 記事モードの自動スクロール保存・自動復帰（tracker/restore）はいったん
+    # 停止中。本番Streamlit Cloudで、入力・クリック・詳細設定の開閉など
+    # 通常操作で発生する意図しないscrollイベントまでsessionStorageに
+    # 保存してしまい、次にmenuへ戻った際に無関係な位置へ復帰する不安定要因に
+    # なっていたため。関数本体は削除せず残し、呼び出しのみ止めている
+    # （_build_article_scroll_tracker_script_html / _render_article_scroll_tracker /
+    # _build_article_scroll_restore_script_html / _render_article_scroll_restore）。
+    # _render_article_scroll_tracker()
+    # if just_entered_menu:
+    #     _render_article_scroll_restore(restore_even_if_hash_consumed=True)
 
     # 画面移動サポートのst.buttonが押されていれば、その回だけ該当要素へ
     # scrollIntoViewする。読み取ったら即座にsession_stateから消し、
