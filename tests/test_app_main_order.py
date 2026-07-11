@@ -37,3 +37,22 @@ def test_sidebar_autosaves_before_menu_switch_rerun():
     rerun_pos = source.index("st.rerun()")
 
     assert autosave_pos < rerun_pos
+
+
+def test_article_mode_sidebar_links_carry_scroll_target_data_attribute():
+    # 記事モードの画面移動サポートリンクは、通常の[text](#anchor)ではなく
+    # data-ai-scroll-target付きの<a>にして、article_ui側のクリック横取り
+    # スクリプトがURL hashを発生させずにscrollIntoViewできるようにする。
+    source = inspect.getsource(app._render_sidebar)
+
+    for anchor_id in (
+        "article-top",
+        "article-current",
+        "article-question",
+        "article-keyword",
+        "article-edit-text",
+        "article-actions",
+        "article-edited-result",
+    ):
+        assert f'data-ai-scroll-target="{anchor_id}"' in source
+        assert f'href="#{anchor_id}"' in source

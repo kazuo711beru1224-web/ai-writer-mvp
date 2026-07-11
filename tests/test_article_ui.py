@@ -1,12 +1,14 @@
 import streamlit as st
 
 from modules.article_ui import (
+    _build_article_scroll_anchor_click_script_html,
     _build_article_scroll_restore_script_html,
     _build_article_scroll_tracker_script_html,
     _classify_question_type,
     _render_large_text_preview,
     _render_reference_hint_section,
     get_article_persist_keys,
+    ARTICLE_SCROLL_ANCHOR_DATA_ATTR,
     ARTICLE_SCROLL_STORAGE_KEY,
     ARTICLE_TOP_ANCHOR_ID,
     REFERENCE_HINT_OPEN_KEY,
@@ -240,3 +242,62 @@ def test_scroll_restore_script_escapes_nonce_value():
     html_out = _build_article_scroll_restore_script_html(nonce='"; alert(1); //')
 
     assert "<script>alert(1)" not in html_out
+
+
+def test_anchor_click_guard_script_prevents_default_and_stops_propagation():
+    # 画面移動サポートのリンククリックでURL hashを発生させないため、
+    # preventDefault/stopPropagationしていることを確認する。
+    html_out = _build_article_scroll_anchor_click_script_html()
+
+    assert "preventDefault()" in html_out
+    assert "stopPropagation()" in html_out
+
+
+def test_anchor_click_guard_script_does_not_set_location_hash():
+    # 主目的はhashを発生させないことであり、location.hashへの代入（新規発生）は
+    # 行わないことを確認する。hashクリアのreplaceStateはあくまで保険。
+    html_out = _build_article_scroll_anchor_click_script_html()
+
+    assert "location.hash =" not in html_out
+    assert ".hash=" not in html_out.replace(" ", "")
+
+
+def test_anchor_click_guard_script_targets_data_attribute_elements_only():
+    # data-ai-scroll-target属性を持つ要素だけを対象にし、他モードの
+    # 通常の<a href="#...">リンクには手を出さないことを確認する。
+    html_out = _build_article_scroll_anchor_click_script_html()
+
+    assert ARTICLE_SCROLL_ANCHOR_DATA_ATTR in html_out
+    assert "closest(" in html_out
+    assert "getAttribute(ATTR)" in html_out
+
+
+def test_anchor_click_guard_script_scrolls_into_view_via_parent_document():
+    html_out = _build_article_scroll_anchor_click_script_html()
+
+    assert "var win = window.parent || window;" in html_out
+    assert "var doc = win.document;" in html_out
+    assert "doc.getElementById(targetId)" in html_out
+    assert "scrollIntoView(" in html_out
+
+
+def test_anchor_click_guard_script_installs_once_via_guard_flag():
+    # 記事モードの再実行のたびにcomponents.htmlが新しいiframeを注入しても、
+    # クリックリスナーが多重登録されないことを確認する。
+    html_out = _build_article_scroll_anchor_click_script_html()
+
+    assert "__aiWriterAnchorClickHandlerInstalled" in html_out
+    assert "if (win.__aiWriterAnchorClickHandlerInstalled) { return; }" in html_out
+
+
+def test_anchor_click_guard_script_uses_replace_state_only_as_a_fallback():
+    # history.replaceStateは保険として使ってよいが、主処理（preventDefault以降の
+    # スクロール実行）がそれに依存していない＝addEventListenerの外ではなく
+    # クリックハンドラ内、scrollIntoViewより後段にあることを確認する。
+    html_out = _build_article_scroll_anchor_click_script_html()
+
+    scroll_idx = html_out.index("scrollIntoView(")
+    replace_state_idx = html_out.index("history.replaceState", scroll_idx)
+
+    assert scroll_idx < replace_state_idx
+    assert "try {" in html_out

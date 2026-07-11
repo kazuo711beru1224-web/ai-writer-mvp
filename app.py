@@ -797,13 +797,37 @@ def _render_sidebar() -> str:
             st.divider()
             st.markdown("### \U0001f9ed \u753b\u9762\u79fb\u52d5\u30b5\u30dd\u30fc\u30c8")
             st.caption("\u8a18\u4e8b\u30e2\u30fc\u30c9\u5185\u306e\u898b\u305f\u3044\u5834\u6240\u3078\u79fb\u52d5\u3067\u304d\u307e\u3059\u3002")
-            st.markdown("- [\u3053\u306e\u753b\u9762\u306e\u5148\u982d\u3078](#article-top)")
-            st.markdown("- [1. \u4eca\u306e\u72b6\u6cc1\u3078](#article-current)")
-            st.markdown("- [2. \u77e5\u308a\u305f\u3044\u3053\u3068\u3078](#article-question)")
-            st.markdown("- [3. \u691c\u7d22\u30ad\u30fc\u30ef\u30fc\u30c9\u3078](#article-keyword)")
-            st.markdown("- [\u516c\u958b\u524d\u306b\u76f4\u3059\u672c\u6587\u3078](#article-edit-text)")
-            st.markdown("- [AI\u78ba\u8a8d\u30fb\u4fdd\u5b58\u30dc\u30bf\u30f3\u3078](#article-actions)")
-            st.markdown("- [\u7de8\u96c6\u5f8c\u306e\u78ba\u8a8d\u7d50\u679c\u3078](#article-edited-result)")
+            # data-ai-scroll-target\u4ed8\u304d\u306e\u30ea\u30f3\u30af\u306fmodules/article_ui.py\u306e
+            # anchor_click_guard\u30b9\u30af\u30ea\u30d7\u30c8\u304c\u30af\u30ea\u30c3\u30af\u3092\u6a2a\u53d6\u308a\u3057\u3001URL hash\u3092
+            # \u767a\u751f\u3055\u305b\u305a\u306bscrollIntoView\u3059\u308b\uff08\u672c\u756a\u3067hash\u304c\u6b8b\u308b\u554f\u984c\u3078\u306e\u5bfe\u7b56\uff09\u3002
+            st.markdown(
+                '- <a href="#article-top" data-ai-scroll-target="article-top">\u3053\u306e\u753b\u9762\u306e\u5148\u982d\u3078</a>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                '- <a href="#article-current" data-ai-scroll-target="article-current">1. \u4eca\u306e\u72b6\u6cc1\u3078</a>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                '- <a href="#article-question" data-ai-scroll-target="article-question">2. \u77e5\u308a\u305f\u3044\u3053\u3068\u3078</a>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                '- <a href="#article-keyword" data-ai-scroll-target="article-keyword">3. \u691c\u7d22\u30ad\u30fc\u30ef\u30fc\u30c9\u3078</a>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                '- <a href="#article-edit-text" data-ai-scroll-target="article-edit-text">\u516c\u958b\u524d\u306b\u76f4\u3059\u672c\u6587\u3078</a>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                '- <a href="#article-actions" data-ai-scroll-target="article-actions">AI\u78ba\u8a8d\u30fb\u4fdd\u5b58\u30dc\u30bf\u30f3\u3078</a>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                '- <a href="#article-edited-result" data-ai-scroll-target="article-edited-result">\u7de8\u96c6\u5f8c\u306e\u78ba\u8a8d\u7d50\u679c\u3078</a>',
+                unsafe_allow_html=True,
+            )
 
 
         if current_menu == MENU_CHECK:

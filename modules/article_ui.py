@@ -1687,6 +1687,66 @@ def _build_article_scroll_tracker_script_html() -> str:
 </script>"""
 
 
+# サイドバー「画面移動サポート」のリンクのうち、この属性を持つものだけを
+# クリック横取りの対象にする（他モードのリンクには手を出さない）。
+ARTICLE_SCROLL_ANCHOR_DATA_ATTR = "data-ai-scroll-target"
+
+
+def _build_article_scroll_anchor_click_script_html() -> str:
+    """
+    サイドバー「画面移動サポート」のリンク（ARTICLE_SCROLL_ANCHOR_DATA_ATTR
+    属性付き）のクリックを document のキャプチャフェーズで横取りし、URL
+    hashを書き換えずに該当要素へscrollIntoViewするリスナーを組み立てる。
+
+    - hashを「後から消す」のではなく、そもそも発生させないのが目的。
+      Streamlit本体の見出しアンカー機能はwindow.location.hashを見て
+      script完了300ms後にscrollIntoViewを試みるため、hashを作らなければ
+      後勝ちされようがない。
+    - window.parentにガードフラグ(__aiWriterAnchorClickHandlerInstalled)を
+      立てて、記事モードの再実行のたびにcomponents.htmlが新しいiframeを
+      注入してもリスナーが重複登録されないようにする。
+    - ARTICLE_SCROLL_ANCHOR_DATA_ATTR を持つ要素だけが対象。通常の
+      <a href="#...">（他モードの画面移動サポート等）はこのリスナーの
+      対象外のまま、従来通りブラウザ標準のアンカー移動をする。
+    - history.replaceStateでのhashクリアはあくまで保険。preventDefaultで
+      そもそもhashを発生させないことが主目的なので、replaceStateが
+      失敗しても実害はない（_build_article_scroll_restore_script_html側の
+      既存hashクリアが最終防御として残っている）。
+    """
+    safe_attr = json.dumps(ARTICLE_SCROLL_ANCHOR_DATA_ATTR)
+    return f"""<script>
+(function() {{
+    var win = window.parent || window;
+    var doc = win.document;
+    if (win.__aiWriterAnchorClickHandlerInstalled) {{ return; }}
+    win.__aiWriterAnchorClickHandlerInstalled = true;
+
+    var ATTR = {safe_attr};
+
+    doc.addEventListener('click', function(ev) {{
+        var el = ev.target && ev.target.closest ? ev.target.closest('[' + ATTR + ']') : null;
+        if (!el) {{ return; }}
+        ev.preventDefault();
+        ev.stopPropagation();
+
+        var targetId = el.getAttribute(ATTR);
+        if (!targetId) {{ return; }}
+
+        var targetEl = doc.getElementById(targetId);
+        if (targetEl && targetEl.scrollIntoView) {{
+            targetEl.scrollIntoView({{behavior: 'auto', block: 'start'}});
+        }}
+
+        try {{
+            if (win.history && win.history.replaceState) {{
+                win.history.replaceState(null, '', win.location.pathname + win.location.search);
+            }}
+        }} catch (e) {{}}
+    }}, true);
+}})();
+</script>"""
+
+
 def _build_article_scroll_restore_script_html(
     nonce: str = "",
     *,
@@ -1795,6 +1855,10 @@ def _build_article_scroll_restore_script_html(
 
 def _render_article_scroll_tracker() -> None:
     components.html(_build_article_scroll_tracker_script_html(), height=0)
+
+
+def _render_article_scroll_anchor_click_guard() -> None:
+    components.html(_build_article_scroll_anchor_click_script_html(), height=0)
 
 
 def _render_article_scroll_restore(*, restore_even_if_hash_consumed: bool = False) -> None:
@@ -2444,7 +2508,11 @@ def render_article_ui(
     # ホームなど他モードから記事モードへ戻ってきた直後の1回に限り、
     # 保存していた位置へ復帰する。通常の入力中の再実行では復帰処理を
     # 呼ばないため、余計なスクロール移動は起きない。
+    # 画面移動サポートのリンククリックはanchor_click_guard側でpreventDefault
+    # されるため、そもそもURL hashが発生しない（本番環境でhashクリアが
+    # 間に合わずStreamlit本体の見出しアンカーに後勝ちされる問題への対策）。
     _render_article_scroll_tracker()
+    _render_article_scroll_anchor_click_guard()
     if just_entered_menu:
         _render_article_scroll_restore()
 
