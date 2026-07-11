@@ -39,11 +39,24 @@ def test_sidebar_autosaves_before_menu_switch_rerun():
     assert autosave_pos < rerun_pos
 
 
-def test_article_mode_sidebar_links_carry_scroll_target_data_attribute():
-    # 記事モードの画面移動サポートリンクは、通常の[text](#anchor)ではなく
-    # data-ai-scroll-target付きの<a>にして、article_ui側のクリック横取り
-    # スクリプトがURL hashを発生させずにscrollIntoViewできるようにする。
+def test_article_mode_sidebar_navigation_has_no_url_hash_links():
+    # 記事モードの画面移動サポートは、本番Streamlit CloudでURL hashが
+    # 残ってしまう問題を避けるため、href="#..."によるアンカー移動を完全に
+    # やめ、st.button + session_state方式へ切り替えた。href="#article-"や
+    # data-ai-scroll-target属性が復活していないことを回帰確認する。
     source = inspect.getsource(app._render_sidebar)
+
+    assert 'href="#article' not in source
+    assert "data-ai-scroll-target" not in source
+
+
+def test_article_mode_sidebar_navigation_uses_buttons_with_scroll_request():
+    # st.button押下でARTICLE_SCROLL_REQUEST_KEYに移動先IDをセットする
+    # 構造になっていることを確認する。
+    source = inspect.getsource(app._render_sidebar)
+
+    assert "st.button(" in source
+    assert "ARTICLE_SCROLL_REQUEST_KEY" in source
 
     for anchor_id in (
         "article-top",
@@ -54,5 +67,4 @@ def test_article_mode_sidebar_links_carry_scroll_target_data_attribute():
         "article-actions",
         "article-edited-result",
     ):
-        assert f'data-ai-scroll-target="{anchor_id}"' in source
-        assert f'href="#{anchor_id}"' in source
+        assert f'"{anchor_id}"' in source

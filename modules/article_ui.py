@@ -1687,62 +1687,59 @@ def _build_article_scroll_tracker_script_html() -> str:
 </script>"""
 
 
-# サイドバー「画面移動サポート」のリンクのうち、この属性を持つものだけを
-# クリック横取りの対象にする（他モードのリンクには手を出さない）。
-ARTICLE_SCROLL_ANCHOR_DATA_ATTR = "data-ai-scroll-target"
+# サイドバー「画面移動サポート」のst.buttonが押されたとき、移動先の要素IDを
+# 一時的に置くsession_stateキー。render_article_ui()側で読み取って消費する
+# one-shotリクエストであり、記事データの永続状態ではない
+# （＝入力保存・自動保存・復元の対象キー一覧には含めない）。
+ARTICLE_SCROLL_REQUEST_KEY = "article__scroll_request"
 
 
-def _build_article_scroll_anchor_click_script_html() -> str:
+def _build_article_scroll_to_target_script_html(target_id: str, nonce: str = "") -> str:
     """
-    サイドバー「画面移動サポート」のリンク（ARTICLE_SCROLL_ANCHOR_DATA_ATTR
-    属性付き）のクリックを document のキャプチャフェーズで横取りし、URL
-    hashを書き換えずに該当要素へscrollIntoViewするリスナーを組み立てる。
+    サイドバー「画面移動サポート」のst.buttonが押されたときに、
+    ARTICLE_SCROLL_REQUEST_KEYで指定された要素へ一度だけscrollIntoViewする
+    スクリプトを組み立てる。
 
-    - hashを「後から消す」のではなく、そもそも発生させないのが目的。
-      Streamlit本体の見出しアンカー機能はwindow.location.hashを見て
-      script完了300ms後にscrollIntoViewを試みるため、hashを作らなければ
-      後勝ちされようがない。
-    - window.parentにガードフラグ(__aiWriterAnchorClickHandlerInstalled)を
-      立てて、記事モードの再実行のたびにcomponents.htmlが新しいiframeを
-      注入してもリスナーが重複登録されないようにする。
-    - ARTICLE_SCROLL_ANCHOR_DATA_ATTR を持つ要素だけが対象。通常の
-      <a href="#...">（他モードの画面移動サポート等）はこのリスナーの
-      対象外のまま、従来通りブラウザ標準のアンカー移動をする。
-    - history.replaceStateでのhashクリアはあくまで保険。preventDefaultで
-      そもそもhashを発生させないことが主目的なので、replaceStateが
-      失敗しても実害はない（_build_article_scroll_restore_script_html側の
-      既存hashクリアが最終防御として残っている）。
+    - 画面移動サポートはhref="#..."によるアンカー移動をやめ、st.button＋
+      session_stateで移動先を渡す方式にしたため、このスクリプトはURL hashを
+      一切読み書きしない。hashが発生する経路自体がもう存在しない。
+    - 記事モードの中身はこのスクリプト実行後も描画が続いていることがあるため、
+      1回だけの呼び出しだと途中までの高さでscrollIntoViewが頭打ちになる。
+      レイアウトが落ち着くまで、時間を空けて複数回呼び直す
+      （_build_article_scroll_restore_script_html と同じ理由）。
+    - 呼び出し直後はwin.__aiWriterArticleScrollPauseUntilを立てて、tracker
+      側がこのプログラム由来のscrollTopを保存し直さないようにする。
+    - nonceはcomponents.htmlへ渡すHTML文字列を毎回変える目的専用の値。
+      前回と完全に同じHTMLだとブラウザがiframeの再読み込み（＝script再実行）
+      を省略する場合があるため、呼び出しのたびに変えて確実に再実行させる。
     """
-    safe_attr = json.dumps(ARTICLE_SCROLL_ANCHOR_DATA_ATTR)
-    return f"""<script>
+    safe_target_id = json.dumps(str(target_id or ""))
+    safe_nonce = html.escape(str(nonce or ""), quote=True)
+    pause_ms = int(ARTICLE_SCROLL_SAVE_PAUSE_MS)
+    return f"""<!-- nonce:{safe_nonce} -->
+<script>
 (function() {{
     var win = window.parent || window;
     var doc = win.document;
-    if (win.__aiWriterAnchorClickHandlerInstalled) {{ return; }}
-    win.__aiWriterAnchorClickHandlerInstalled = true;
 
-    var ATTR = {safe_attr};
+    function pauseTrackerSaves() {{
+        win.__aiWriterArticleScrollPauseUntil = Date.now() + {pause_ms};
+    }}
 
-    doc.addEventListener('click', function(ev) {{
-        var el = ev.target && ev.target.closest ? ev.target.closest('[' + ATTR + ']') : null;
-        if (!el) {{ return; }}
-        ev.preventDefault();
-        ev.stopPropagation();
+    var TARGET_ID = {safe_target_id};
+    if (!TARGET_ID) {{ return; }}
 
-        var targetId = el.getAttribute(ATTR);
-        if (!targetId) {{ return; }}
-
-        var targetEl = doc.getElementById(targetId);
-        if (targetEl && targetEl.scrollIntoView) {{
-            targetEl.scrollIntoView({{behavior: 'auto', block: 'start'}});
+    function applyScroll() {{
+        var el = doc.getElementById(TARGET_ID);
+        if (el && el.scrollIntoView) {{
+            el.scrollIntoView({{behavior: 'auto', block: 'start'}});
         }}
-
-        try {{
-            if (win.history && win.history.replaceState) {{
-                win.history.replaceState(null, '', win.location.pathname + win.location.search);
-            }}
-        }} catch (e) {{}}
-    }}, true);
+        pauseTrackerSaves();
+    }}
+    applyScroll();
+    win.setTimeout(applyScroll, 50);
+    win.setTimeout(applyScroll, 200);
+    win.setTimeout(applyScroll, 500);
 }})();
 </script>"""
 
@@ -1857,8 +1854,12 @@ def _render_article_scroll_tracker() -> None:
     components.html(_build_article_scroll_tracker_script_html(), height=0)
 
 
-def _render_article_scroll_anchor_click_guard() -> None:
-    components.html(_build_article_scroll_anchor_click_script_html(), height=0)
+def _render_article_scroll_to_target(target_id: str) -> None:
+    nonce = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    components.html(
+        _build_article_scroll_to_target_script_html(target_id, nonce=nonce),
+        height=0,
+    )
 
 
 def _render_article_scroll_restore(*, restore_even_if_hash_consumed: bool = False) -> None:
@@ -2508,13 +2509,20 @@ def render_article_ui(
     # ホームなど他モードから記事モードへ戻ってきた直後の1回に限り、
     # 保存していた位置へ復帰する。通常の入力中の再実行では復帰処理を
     # 呼ばないため、余計なスクロール移動は起きない。
-    # 画面移動サポートのリンククリックはanchor_click_guard側でpreventDefault
-    # されるため、そもそもURL hashが発生しない（本番環境でhashクリアが
-    # 間に合わずStreamlit本体の見出しアンカーに後勝ちされる問題への対策）。
+    # hashが既に残っていても復帰処理自体は止めない
+    # （restore_even_if_hash_consumed=True）。画面移動サポートは
+    # href="#..."によるアンカー移動をやめたため、残存hashは常に過去の
+    # 汚れであり、直前のリンク操作を尊重する理由がもう無い。
     _render_article_scroll_tracker()
-    _render_article_scroll_anchor_click_guard()
     if just_entered_menu:
-        _render_article_scroll_restore()
+        _render_article_scroll_restore(restore_even_if_hash_consumed=True)
+
+    # 画面移動サポートのst.buttonが押されていれば、その回だけ該当要素へ
+    # scrollIntoViewする。読み取ったら即座にsession_stateから消し、
+    # 次回の再実行で再度動かないようにする（one-shotリクエスト）。
+    scroll_request = st.session_state.pop(ARTICLE_SCROLL_REQUEST_KEY, None)
+    if scroll_request:
+        _render_article_scroll_to_target(str(scroll_request))
 
     _render_sensitive_notice_box()
 
