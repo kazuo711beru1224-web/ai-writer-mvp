@@ -50,21 +50,23 @@ def test_article_mode_sidebar_navigation_has_no_url_hash_links():
     assert "data-ai-scroll-target" not in source
 
 
-def test_article_mode_sidebar_navigation_uses_buttons_with_scroll_request():
-    # st.button押下でARTICLE_SCROLL_REQUEST_KEYに移動先IDをセットする
-    # 構造になっていることを確認する。
+def test_article_mode_sidebar_navigation_uses_buttons_with_active_page():
+    # st.button押下でARTICLE_ACTIVE_PAGE_KEYに移動先ページ番号をセットする
+    # 構造になっていることを確認する（scrollIntoView・ARTICLE_SCROLL_REQUEST_KEY
+    # はどちらも使わない）。
     source = inspect.getsource(app._render_sidebar)
 
     assert "st.button(" in source
-    assert "ARTICLE_SCROLL_REQUEST_KEY" in source
+    assert "ARTICLE_ACTIVE_PAGE_KEY" in source
+    assert "ARTICLE_SCROLL_REQUEST_KEY" not in source
 
-    for anchor_id in (
-        "article-top",
-        "article-current",
-        "article-question",
-        "article-keyword",
-        "article-edit-text",
-        "article-actions",
-        "article-edited-result",
+    for target_page in (
+        "ARTICLE_PAGE_BASIC",
+        "ARTICLE_PAGE_KEYWORD",
+        "ARTICLE_PAGE_OFFICIAL",
+        "ARTICLE_PAGE_STYLE",
+        "ARTICLE_PAGE_DRAFT",
+        "ARTICLE_PAGE_PRECHECK",
+        "ARTICLE_PAGE_POSTEDIT",
     ):
-        assert f'"{anchor_id}"' in source
+        assert target_page in source

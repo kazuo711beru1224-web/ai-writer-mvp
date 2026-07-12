@@ -5,18 +5,18 @@ import streamlit as st
 import modules.article_ui as article_ui
 from modules.article_ui import (
     _build_article_scroll_restore_script_html,
-    _build_article_scroll_to_target_script_html,
     _build_article_scroll_tracker_script_html,
     _classify_question_type,
     _render_large_text_preview,
     _render_reference_hint_section,
     get_article_persist_keys,
     render_article_ui,
-    ARTICLE_ACTIVE_STEP_KEY,
-    ARTICLE_SCROLL_REQUEST_KEY,
+    ARTICLE_ACTIVE_PAGE_KEY,
+    ARTICLE_PAGE_BASIC,
+    ARTICLE_PAGE_OFFICIAL,
+    ARTICLE_PAGE_DRAFT,
+    ARTICLE_PAGE_POSTEDIT,
     ARTICLE_SCROLL_STORAGE_KEY,
-    ARTICLE_STEP_GENERATE,
-    ARTICLE_STEP_INPUT,
     ARTICLE_TOP_ANCHOR_ID,
     KEYS,
     REFERENCE_HINT_OPEN_KEY,
@@ -252,58 +252,6 @@ def test_scroll_restore_script_escapes_nonce_value():
     assert "<script>alert(1)" not in html_out
 
 
-def test_scroll_to_target_script_uses_scroll_into_view():
-    html_out = _build_article_scroll_to_target_script_html("article-keyword", nonce="1")
-
-    assert "var win = window.parent || window;" in html_out
-    assert "var doc = win.document;" in html_out
-    assert "doc.getElementById(TARGET_ID)" in html_out
-    assert "scrollIntoView(" in html_out
-
-
-def test_scroll_to_target_script_never_touches_location_hash():
-    # 画面移動サポートはst.button＋session_state方式に変えたため、
-    # このスクリプトはURL hashを一切読み書きしないことを確認する。
-    html_out = _build_article_scroll_to_target_script_html("article-keyword", nonce="1")
-
-    assert "location.hash" not in html_out
-    assert "history.replaceState" not in html_out
-
-
-def test_scroll_to_target_script_embeds_requested_target_id():
-    html_out = _build_article_scroll_to_target_script_html("article-keyword", nonce="1")
-
-    assert '"article-keyword"' in html_out
-
-
-def test_scroll_to_target_script_pauses_tracker_saves_after_running():
-    html_out = _build_article_scroll_to_target_script_html("article-top", nonce="1")
-
-    assert "__aiWriterArticleScrollPauseUntil" in html_out
-
-
-def test_scroll_to_target_script_differs_by_nonce_to_force_iframe_reload():
-    html_1 = _build_article_scroll_to_target_script_html("article-top", nonce="1")
-    html_2 = _build_article_scroll_to_target_script_html("article-top", nonce="2")
-
-    assert html_1 != html_2
-
-
-def test_scroll_to_target_script_escapes_target_id_value():
-    html_out = _build_article_scroll_to_target_script_html(
-        '"; alert(1); //', nonce="1"
-    )
-
-    assert "<script>alert(1)" not in html_out
-
-
-def test_article_scroll_request_key_is_not_a_persisted_data_key():
-    # 画面移動サポートの移動先はone-shotのUIリクエストであり、記事データそのもの
-    # ではないため、自動保存の作業内容判定（get_article_persist_keys）には
-    # 含めない設計であることを確認する。
-    assert ARTICLE_SCROLL_REQUEST_KEY not in get_article_persist_keys()
-
-
 def _active_code_lines(source: str) -> str:
     # コメントアウトされた呼び出し（無効化した保険コード）を除外し、
     # 実際に実行されるコード行だけを対象に文字列アサーションするための補助。
@@ -331,127 +279,122 @@ def test_render_article_ui_does_not_auto_call_scroll_restore():
     assert "_render_article_scroll_restore(" not in active_source
 
 
-def test_detail_settings_does_not_auto_call_scroll_restore_after_apply():
+def test_official_info_page_does_not_auto_call_scroll_restore_after_apply():
     # 「この確認先を下書きに反映する」ボタン後の復帰呼び出しも停止されている
     # ことを確認する（コメントアウトされた呼び出しは対象外）。
-    from modules.article_ui import _render_detail_settings
-
-    active_source = _active_code_lines(inspect.getsource(_render_detail_settings))
+    active_source = _active_code_lines(
+        inspect.getsource(article_ui._render_page_3_official_info)
+    )
 
     assert "_render_article_scroll_restore(" not in active_source
 
 
-def test_render_article_ui_still_calls_scroll_to_target():
-    # 画面移動サポートのst.button→session_state→scrollIntoViewの仕組みは
-    # 自動復帰停止の影響を受けず、引き続き呼ばれることを確認する。
-    active_source = _active_code_lines(inspect.getsource(render_article_ui))
+def test_render_article_ui_does_not_use_scroll_into_view():
+    # 画面移動サポートはscrollIntoViewをやめ、active_page切替のみで行う
+    # ようにしたため、render_article_ui()はscrollIntoView・one-shotの
+    # スクロールリクエストのどちらも一切使わないことを回帰確認する。
+    source = inspect.getsource(render_article_ui)
 
-    assert "_render_article_scroll_to_target(" in active_source
-    assert "ARTICLE_SCROLL_REQUEST_KEY" in active_source
+    assert "scrollIntoView" not in source
+    assert "ARTICLE_SCROLL_REQUEST_KEY" not in source
+
+
+def test_official_info_page_has_no_url_hash_or_scroll_markup():
+    # 公式情報・確認先ページ自体にも、URL hashやscrollIntoViewに関する
+    # マークアップが残っていないことを確認する。
+    source = inspect.getsource(article_ui._render_page_3_official_info)
+
+    assert "scrollIntoView" not in source
+    assert 'href="#' not in source
+    assert "data-ai-scroll-target" not in source
 
 
 # =========================
-# 記事モードのステップ型UI（2分割）
+# 記事モードのページ区切り型UI（7ページ）
 # =========================
 
 def _common_kwargs():
     return dict(outputs_dir="out", logs_dir="logs", openai_api_key="", use_real_api=False)
 
 
-def test_article_active_step_key_is_not_a_persisted_data_key():
-    # ステップ表示は画面状態であり記事データではないため、自動保存対象
+def test_article_active_page_key_is_not_a_persisted_data_key():
+    # ページ表示は画面状態であり記事データではないため、自動保存対象
     # （get_article_persist_keys）には含めない設計であることを確認する。
-    assert ARTICLE_ACTIVE_STEP_KEY not in get_article_persist_keys()
+    assert ARTICLE_ACTIVE_PAGE_KEY not in get_article_persist_keys()
 
 
-def test_article_active_step_defaults_to_input_step():
+def test_article_active_page_defaults_to_basic_page():
     _reset_session_state()
     render_article_ui(**_common_kwargs())
 
-    assert st.session_state[ARTICLE_ACTIVE_STEP_KEY] == ARTICLE_STEP_INPUT
-    assert ARTICLE_STEP_INPUT == 1
+    assert st.session_state[ARTICLE_ACTIVE_PAGE_KEY] == ARTICLE_PAGE_BASIC
+    assert ARTICLE_PAGE_BASIC == 1
 
 
-def test_input_step_renders_standard_inputs_and_detail_settings_only(monkeypatch):
+def test_render_article_ui_dispatches_only_the_active_page(monkeypatch):
     _reset_session_state()
-    st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_INPUT
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_OFFICIAL
 
     calls = []
-    monkeypatch.setattr(article_ui, "_render_standard_inputs", lambda: calls.append("standard"))
-    monkeypatch.setattr(article_ui, "_render_detail_settings", lambda: calls.append("detail"))
-    monkeypatch.setattr(article_ui, "_render_generate_step", lambda **kw: calls.append("generate"))
+    monkeypatch.setattr(article_ui, "_render_page_1_basic", lambda: calls.append(1))
+    monkeypatch.setattr(article_ui, "_render_page_2_keyword_and_detail_entry", lambda: calls.append(2))
+    monkeypatch.setattr(article_ui, "_render_page_3_official_info", lambda: calls.append(3))
+    monkeypatch.setattr(article_ui, "_render_page_4_writing_style", lambda: calls.append(4))
+    monkeypatch.setattr(article_ui, "_render_page_5_draft", lambda **kw: calls.append(5))
+    monkeypatch.setattr(article_ui, "_render_page_6_precheck", lambda: calls.append(6))
+    monkeypatch.setattr(article_ui, "_render_page_7_postedit_save", lambda **kw: calls.append(7))
 
     render_article_ui(**_common_kwargs())
 
-    assert calls == ["standard", "detail"]
+    assert calls == [3]
 
 
-def test_generate_step_renders_generate_step_only(monkeypatch):
+def test_go_to_page_switches_active_page():
     _reset_session_state()
-    st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_GENERATE
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
 
-    calls = []
-    monkeypatch.setattr(article_ui, "_render_standard_inputs", lambda: calls.append("standard"))
-    monkeypatch.setattr(article_ui, "_render_detail_settings", lambda: calls.append("detail"))
-    monkeypatch.setattr(article_ui, "_render_generate_step", lambda **kw: calls.append("generate"))
-
-    render_article_ui(**_common_kwargs())
-
-    assert calls == ["generate"]
+    article_ui._go_to_page(ARTICLE_PAGE_DRAFT)
+    assert st.session_state[ARTICLE_ACTIVE_PAGE_KEY] == ARTICLE_PAGE_DRAFT
 
 
-def test_go_to_step_helpers_switch_active_step():
+def test_page_nav_buttons_show_only_next_on_first_page(monkeypatch):
     _reset_session_state()
-    st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_INPUT
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
 
-    article_ui._go_to_generate_step()
-    assert st.session_state[ARTICLE_ACTIVE_STEP_KEY] == ARTICLE_STEP_GENERATE
+    captured = []
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: captured.append(label))
+    article_ui._render_page_nav_buttons(position="test")
 
-    article_ui._go_to_input_step()
-    assert st.session_state[ARTICLE_ACTIVE_STEP_KEY] == ARTICLE_STEP_INPUT
+    assert captured == ["次へ →"]
 
 
-def test_step_nav_buttons_bind_next_callback_on_input_step(monkeypatch):
+def test_page_nav_buttons_show_only_back_on_last_page(monkeypatch):
     _reset_session_state()
-    st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_INPUT
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_POSTEDIT
 
-    captured = {}
+    captured = []
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: captured.append(label))
+    article_ui._render_page_nav_buttons(position="test")
 
-    def fake_button(label, **kwargs):
-        captured["label"] = label
-        captured["on_click"] = kwargs.get("on_click")
-        return False
-
-    monkeypatch.setattr(st, "button", fake_button)
-    article_ui._render_step_nav_buttons(position="test")
-
-    assert "次へ" in captured["label"]
-    assert captured["on_click"] is article_ui._go_to_generate_step
+    assert captured == ["← 戻る"]
 
 
-def test_step_nav_buttons_bind_back_callback_on_generate_step(monkeypatch):
+def test_page_nav_buttons_show_both_on_middle_page(monkeypatch):
     _reset_session_state()
-    st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_GENERATE
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_OFFICIAL
 
-    captured = {}
+    captured = []
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: captured.append(label))
+    article_ui._render_page_nav_buttons(position="test")
 
-    def fake_button(label, **kwargs):
-        captured["label"] = label
-        captured["on_click"] = kwargs.get("on_click")
-        return False
-
-    monkeypatch.setattr(st, "button", fake_button)
-    article_ui._render_step_nav_buttons(position="test")
-
-    assert "戻る" in captured["label"]
-    assert captured["on_click"] is article_ui._go_to_input_step
+    assert captured == ["← 戻る", "次へ →"]
 
 
-def test_input_values_survive_switching_between_steps():
-    # ステップを移動しても、既存のsession_state(KEYS)に入れた入力内容が
+def test_input_values_survive_switching_between_pages():
+    # ページを移動しても、既存のsession_state(KEYS)に入れた入力内容が
     # 消えないことを確認する（新しい自動保存・復帰の仕組みは追加していない）。
     _reset_session_state()
-    st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_INPUT
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
     st.session_state[KEYS["consult_situation"]] = "テスト用の状況"
     st.session_state[KEYS["consult_question"]] = "テスト用の質問"
 
@@ -459,18 +402,18 @@ def test_input_values_survive_switching_between_steps():
     assert st.session_state[KEYS["consult_situation"]] == "テスト用の状況"
     assert st.session_state[KEYS["consult_question"]] == "テスト用の質問"
 
-    article_ui._go_to_generate_step()
+    article_ui._go_to_page(ARTICLE_PAGE_DRAFT)
     render_article_ui(**_common_kwargs())
 
     assert st.session_state[KEYS["consult_situation"]] == "テスト用の状況"
     assert st.session_state[KEYS["consult_question"]] == "テスト用の質問"
-    assert st.session_state[ARTICLE_ACTIVE_STEP_KEY] == ARTICLE_STEP_GENERATE
+    assert st.session_state[ARTICLE_ACTIVE_PAGE_KEY] == ARTICLE_PAGE_DRAFT
 
 
-def test_render_generate_step_does_not_call_scroll_tracker_or_restore():
-    # ステップ2の中身を切り出した_render_generate_stepにも、自動スクロール
-    # 保存・自動復帰の呼び出しが紛れ込んでいないことを回帰確認する。
-    active_source = _active_code_lines(inspect.getsource(article_ui._render_generate_step))
+def test_render_page_5_draft_does_not_call_scroll_tracker_or_restore():
+    # ページ5(下書き作成)の中身にも、自動スクロール保存・自動復帰の呼び出しが
+    # 紛れ込んでいないことを回帰確認する。
+    active_source = _active_code_lines(inspect.getsource(article_ui._render_page_5_draft))
 
     assert "_render_article_scroll_tracker()" not in active_source
     assert "_render_article_scroll_restore(" not in active_source

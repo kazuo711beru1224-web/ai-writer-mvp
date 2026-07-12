@@ -182,51 +182,82 @@ DETAIL_OPEN_KEY = "article__detail_open"
 # ここだけで完結する独立フラグで管理する。
 REFERENCE_HINT_OPEN_KEY = "article__show_reference_hint"
 
-# 記事モードのステップ型UI（長い1ページ型のスクロールをやめ、ボタンで
+# 記事モードのページ区切り型UI（長い1ページ型のスクロールをやめ、
+# 1画面あたり数項目だけを表示する7ページ構成で「前へ」「次へ」により
 # 表示区画を切り替えるための現在地）。値は入力保存の対象ではなく画面表示
 # だけの状態なので、PERSIST_KEYSには含めない（get_article_persist_keys参照）。
-ARTICLE_ACTIVE_STEP_KEY = "article__active_step"
-ARTICLE_STEP_INPUT = 1
-ARTICLE_STEP_GENERATE = 2
+ARTICLE_ACTIVE_PAGE_KEY = "article__active_page"
+ARTICLE_PAGE_BASIC = 1       # かんたん記事作成
+ARTICLE_PAGE_KEYWORD = 2     # 検索キーワード・詳細設定入口
+ARTICLE_PAGE_OFFICIAL = 3    # 公式情報・確認先
+ARTICLE_PAGE_STYLE = 4       # 書き方の希望
+ARTICLE_PAGE_DRAFT = 5       # 下書き作成
+ARTICLE_PAGE_PRECHECK = 6    # 公開前確認
+ARTICLE_PAGE_POSTEDIT = 7    # 編集後確認・保存
+ARTICLE_PAGE_COUNT = 7
+ARTICLE_PAGE_LABELS: Dict[int, str] = {
+    ARTICLE_PAGE_BASIC: "基本入力",
+    ARTICLE_PAGE_KEYWORD: "キーワード",
+    ARTICLE_PAGE_OFFICIAL: "公式情報",
+    ARTICLE_PAGE_STYLE: "書き方",
+    ARTICLE_PAGE_DRAFT: "下書き作成",
+    ARTICLE_PAGE_PRECHECK: "公開前確認",
+    ARTICLE_PAGE_POSTEDIT: "編集後確認・保存",
+}
 
 
-def _ensure_active_step_initialized() -> None:
-    if ARTICLE_ACTIVE_STEP_KEY not in st.session_state:
-        st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_INPUT
+def _ensure_active_page_initialized() -> None:
+    if ARTICLE_ACTIVE_PAGE_KEY not in st.session_state:
+        st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
 
 
-def _go_to_input_step() -> None:
-    st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_INPUT
+def _go_to_page(page: int) -> None:
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = page
 
 
-def _go_to_generate_step() -> None:
-    st.session_state[ARTICLE_ACTIVE_STEP_KEY] = ARTICLE_STEP_GENERATE
+def _render_page_indicator() -> None:
+    page = st.session_state.get(ARTICLE_ACTIVE_PAGE_KEY, ARTICLE_PAGE_BASIC)
+    label = ARTICLE_PAGE_LABELS.get(page, "")
+    st.caption(f"📍 {page}/{ARTICLE_PAGE_COUNT} {label}")
 
 
-def _render_step_indicator() -> None:
-    step = st.session_state.get(ARTICLE_ACTIVE_STEP_KEY, ARTICLE_STEP_INPUT)
-    if step == ARTICLE_STEP_GENERATE:
-        st.caption("📍 ステップ 2/2：生成・確認・保存")
-    else:
-        st.caption("📍 ステップ 1/2：入力・設定")
+def _render_page_nav_buttons(*, position: str) -> None:
+    page = st.session_state.get(ARTICLE_ACTIVE_PAGE_KEY, ARTICLE_PAGE_BASIC)
 
-
-def _render_step_nav_buttons(*, position: str) -> None:
-    step = st.session_state.get(ARTICLE_ACTIVE_STEP_KEY, ARTICLE_STEP_INPUT)
-    if step == ARTICLE_STEP_GENERATE:
+    if page <= ARTICLE_PAGE_BASIC:
         st.button(
-            "← 入力・設定へ戻る",
-            key=f"btn_article_step_back_{position}",
+            "次へ →",
+            key=f"btn_article_page_next_{position}",
             use_container_width=True,
-            on_click=_go_to_input_step,
+            on_click=_go_to_page,
+            args=(page + 1,),
+        )
+    elif page >= ARTICLE_PAGE_COUNT:
+        st.button(
+            "← 戻る",
+            key=f"btn_article_page_back_{position}",
+            use_container_width=True,
+            on_click=_go_to_page,
+            args=(page - 1,),
         )
     else:
-        st.button(
-            "次へ：生成・確認へ →",
-            key=f"btn_article_step_next_{position}",
-            use_container_width=True,
-            on_click=_go_to_generate_step,
-        )
+        nav_col1, nav_col2 = st.columns([1, 1])
+        with nav_col1:
+            st.button(
+                "← 戻る",
+                key=f"btn_article_page_back_{position}",
+                use_container_width=True,
+                on_click=_go_to_page,
+                args=(page - 1,),
+            )
+        with nav_col2:
+            st.button(
+                "次へ →",
+                key=f"btn_article_page_next_{position}",
+                use_container_width=True,
+                on_click=_go_to_page,
+                args=(page + 1,),
+            )
 
 
 def _ensure_detail_open_initialized() -> None:
@@ -240,28 +271,6 @@ def _open_detail_settings() -> None:
 
 def _close_detail_settings() -> None:
     st.session_state[DETAIL_OPEN_KEY] = False
-
-
-def _has_any_detail_values() -> bool:
-    detail_keys = (
-        KEYS["main_kw"], KEYS["sub_kw"], KEYS["theme"], KEYS["memo"],
-        KEYS["tone_reg"],
-        KEYS["evidence_url"], KEYS["evidence_title"], KEYS["evidence_facts"], KEYS["evidence_points"],
-    )
-    return any(not _is_blank(st.session_state.get(k, "")) for k in detail_keys)
-
-
-def _should_expand_detail_settings() -> bool:
-    return bool(st.session_state.get(DETAIL_OPEN_KEY, False)) or _has_any_detail_values()
-
-
-def _sync_evidence_and_keep_detail_open() -> None:
-    _open_detail_settings()
-    _sync_evidence_text_from_parts()
-
-
-def _keep_detail_open() -> None:
-    _open_detail_settings()
 
 
 def get_article_persist_keys() -> set[str]:
@@ -481,7 +490,7 @@ def _ensure_keys_initialized() -> None:
 
     _ensure_ui_flags_initialized()
     _ensure_detail_open_initialized()
-    _ensure_active_step_initialized()
+    _ensure_active_page_initialized()
     _migrate_legacy_keys_once()
 
 
@@ -1640,14 +1649,6 @@ def _render_reference_hint_section() -> None:
         st.caption("公式サイトの確認先が必要なテーマでは、ここに探し方のヒントを表示します。")
 
 
-def _render_theme_input_tips() -> None:
-    help_text = _get_detail_help_text()
-    st.markdown("**このテーマで入れるとよいものの例**")
-    st.caption(f"参照URL：{help_text['url']}")
-    st.caption(f"大事な数字：{help_text['numbers']}")
-    st.caption(f"要点メモ：{help_text['memo']}")
-
-
 def _build_copy_button_html(text: str, label: str) -> str:
     """
     コピー用ボタンのHTMLを組み立てる。
@@ -1730,63 +1731,6 @@ def _build_article_scroll_tracker_script_html() -> str:
             try {{ win.sessionStorage.setItem(KEY, String(target.scrollTop)); }} catch (e) {{}}
         }}, 150);
     }}, true);
-}})();
-</script>"""
-
-
-# サイドバー「画面移動サポート」のst.buttonが押されたとき、移動先の要素IDを
-# 一時的に置くsession_stateキー。render_article_ui()側で読み取って消費する
-# one-shotリクエストであり、記事データの永続状態ではない
-# （＝入力保存・自動保存・復元の対象キー一覧には含めない）。
-ARTICLE_SCROLL_REQUEST_KEY = "article__scroll_request"
-
-
-def _build_article_scroll_to_target_script_html(target_id: str, nonce: str = "") -> str:
-    """
-    サイドバー「画面移動サポート」のst.buttonが押されたときに、
-    ARTICLE_SCROLL_REQUEST_KEYで指定された要素へ一度だけscrollIntoViewする
-    スクリプトを組み立てる。
-
-    - 画面移動サポートはhref="#..."によるアンカー移動をやめ、st.button＋
-      session_stateで移動先を渡す方式にしたため、このスクリプトはURL hashを
-      一切読み書きしない。hashが発生する経路自体がもう存在しない。
-    - 記事モードの中身はこのスクリプト実行後も描画が続いていることがあるため、
-      1回だけの呼び出しだと途中までの高さでscrollIntoViewが頭打ちになる。
-      レイアウトが落ち着くまで、時間を空けて複数回呼び直す
-      （_build_article_scroll_restore_script_html と同じ理由）。
-    - 呼び出し直後はwin.__aiWriterArticleScrollPauseUntilを立てて、tracker
-      側がこのプログラム由来のscrollTopを保存し直さないようにする。
-    - nonceはcomponents.htmlへ渡すHTML文字列を毎回変える目的専用の値。
-      前回と完全に同じHTMLだとブラウザがiframeの再読み込み（＝script再実行）
-      を省略する場合があるため、呼び出しのたびに変えて確実に再実行させる。
-    """
-    safe_target_id = json.dumps(str(target_id or ""))
-    safe_nonce = html.escape(str(nonce or ""), quote=True)
-    pause_ms = int(ARTICLE_SCROLL_SAVE_PAUSE_MS)
-    return f"""<!-- nonce:{safe_nonce} -->
-<script>
-(function() {{
-    var win = window.parent || window;
-    var doc = win.document;
-
-    function pauseTrackerSaves() {{
-        win.__aiWriterArticleScrollPauseUntil = Date.now() + {pause_ms};
-    }}
-
-    var TARGET_ID = {safe_target_id};
-    if (!TARGET_ID) {{ return; }}
-
-    function applyScroll() {{
-        var el = doc.getElementById(TARGET_ID);
-        if (el && el.scrollIntoView) {{
-            el.scrollIntoView({{behavior: 'auto', block: 'start'}});
-        }}
-        pauseTrackerSaves();
-    }}
-    applyScroll();
-    win.setTimeout(applyScroll, 50);
-    win.setTimeout(applyScroll, 200);
-    win.setTimeout(applyScroll, 500);
 }})();
 </script>"""
 
@@ -1899,14 +1843,6 @@ def _build_article_scroll_restore_script_html(
 
 def _render_article_scroll_tracker() -> None:
     components.html(_build_article_scroll_tracker_script_html(), height=0)
-
-
-def _render_article_scroll_to_target(target_id: str) -> None:
-    nonce = datetime.now().strftime("%Y%m%d%H%M%S%f")
-    components.html(
-        _build_article_scroll_to_target_script_html(target_id, nonce=nonce),
-        height=0,
-    )
 
 
 def _render_article_scroll_restore(*, restore_even_if_hash_consumed: bool = False) -> None:
@@ -2278,7 +2214,6 @@ def _effective_guardrail_evidence() -> tuple[str, bool]:
 def _render_guardrail_meter(*, body_text: str, evidence_text: str) -> str:
     res = evaluate_guardrails(body_text=body_text, evidence_text=evidence_text, root_mode=True)
 
-    st.markdown('<div id="article-final-check" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("### 公開前の確認")
     badge = {"SAFE": "✅ SAFE", "CAUTION": "⚠️ CAUTION", "RISK": "🛑 RISK"}[res.level]
     st.write(badge)
@@ -2351,12 +2286,10 @@ def _save_article_file(*, outputs_dir: str, body_text: str) -> tuple[bool, str]:
         return False, "記事の保存に失敗しました。保存先フォルダや権限を確認してください。"
 
 
-def _render_standard_inputs() -> None:
-    st.markdown('<div id="article-top" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
+def _render_page_1_basic() -> None:
     st.markdown("## 📝 かんたん記事作成")
-    st.write("まずは3つだけで大丈夫です。細かい設定はあとから確認できます。")
+    st.write("まずは2つだけで大丈夫です。")
 
-    st.markdown('<div id="article-current" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("### 1. 今の状況")
     st.text_area(
         "困っていることや背景を書いてください",
@@ -2365,7 +2298,6 @@ def _render_standard_inputs() -> None:
     )
     st.caption("例：63歳会社員。給与28万円と賞与があり、年金がどう変わるか知りたい。")
 
-    st.markdown('<div id="article-question" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("### 2. 知りたいこと")
     st.text_area(
         "何を知りたいか、どう判断したいかを書いてください",
@@ -2374,7 +2306,12 @@ def _render_standard_inputs() -> None:
     )
     st.caption("例：給与と賞与はどう合算されるか。今の基準額は何か。")
 
-    st.markdown('<div id="article-keyword" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
+    _render_question_type_box()
+
+
+def _render_page_2_keyword_and_detail_entry() -> None:
+    st.markdown("## 🔍 検索キーワード・詳細設定")
+
     st.markdown("### 3. 検索キーワード（任意）")
     st.caption("思いつく言葉があれば、2〜5個くらい入れてください。空でも進められます。")
     st.text_input(
@@ -2382,122 +2319,127 @@ def _render_standard_inputs() -> None:
         key=KEYS["suggest"],
     )
 
-    _render_question_type_box()
-
     if _is_high_risk_topic():
-        st.warning("制度や数字が関わるテーマです。必要に応じて、下の『詳細設定』で確認先を入れてから進めると安全です。")
+        st.warning("制度や数字が関わるテーマです。次のページで確認先を入れてから進めると安全です。")
+
+    st.markdown("### 詳しく設定しますか？")
+    st.caption("通常は空欄のままで大丈夫です。精度を上げたいときだけ、次以降のページで入力してください。")
+
+    if st.button("入力内容から詳細設定を自動補助する", key="btn_apply_consult_into_detail", use_container_width=True):
+        _apply_consult_to_article_inputs()
 
 
-def _render_detail_settings() -> None:
-    with st.expander("🔧 詳細設定（必要なときだけ）", expanded=_should_expand_detail_settings()):
-        st.caption("※通常は自動で十分です。精度を上げたいときだけ使ってください。")
+def _render_page_3_official_info() -> None:
+    st.markdown("## 📚 公式情報・確認先")
+    st.caption("通常は空欄でも大丈夫です。分かる範囲だけ入力してください。")
 
-        if st.button("入力内容から詳細設定を自動補助する", key="btn_apply_consult_into_detail", use_container_width=True):
-            _apply_consult_to_article_inputs()
+    effective_evidence_text = _get_effective_input_evidence_text()
+    _render_evidence_compact_guide(effective_evidence_text)
 
-        _render_theme_input_tips()
+    _render_reference_hint_section()
 
-        st.markdown("### 記事の芯（AIが下書きに使う内容）")
+    # クリックのたびに再実行されると画面が飛ぶため、確認先の入力欄は
+    # st.form にまとめ、反映ボタンを押すまで再実行させない。
+    with st.form("article_detail_settings_form", clear_on_submit=False):
+        st.text_input(
+            "すでに見つけた公式URL",
+            key=KEYS["evidence_url"],
+        )
+        st.caption(
+            "公式ページを見つけている場合はURLを貼ってください。分からなければ空欄で大丈夫です。"
+            "次の段階で、AIが公式ページの候補を探します。"
+        )
 
+        st.text_input(
+            "すでに分かっている書類名・検索語",
+            key=KEYS["evidence_title"],
+        )
+        st.caption(
+            "分かっている書類名や、検索した言葉があれば書いてください。"
+            "例：資格確認書、年金事務所、在職老齢年金、代表社員変更、登記申請書"
+        )
+
+        st.text_area(
+            "大事な数字・期限",
+            height=90,
+            key=KEYS["evidence_facts"],
+        )
+        st.caption(_get_detail_help_text()["numbers"])
+
+        st.text_area(
+            "このページでいちばん大事だったこと",
+            height=120,
+            key=KEYS["evidence_points"],
+        )
+        st.caption(_get_detail_help_text()["memo"])
+
+        detail_submitted = st.form_submit_button("この確認先を下書きに反映する")
+
+    st.caption(
+        "確認先を入力したら、先に『この確認先を下書きに反映する』を押してください。"
+        "押すまで下書きには使われません。"
+    )
+
+    if detail_submitted:
+        _sync_evidence_text_from_parts()
+        # st.success はレイアウトの高さを押し下げてスクロール位置がずれやすいため、
+        # 高さに影響しない st.toast で反映完了を伝える。
+        st.toast("詳細設定を反映しました。")
+
+    split_mode_on = _has_any_split_evidence_input()
+    legacy_evidence_text = str(st.session_state.get(KEYS["evidence"], "") or "").strip()
+    if (not split_mode_on) and (not _is_blank(legacy_evidence_text)):
+        st.info("以前の保存データの根拠が残っています。分割欄が空の間は、その根拠をそのまま使います。")
+        st.code(legacy_evidence_text, language="text")
+
+
+def _render_page_4_writing_style() -> None:
+    st.markdown("## ✏️ 書き方の希望")
+    st.caption("通常は空欄でも大丈夫です。必要なときだけ入力してください。")
+
+    memo = str(st.session_state.get(KEYS["memo"], "") or "").strip()
+    if not memo:
+        st.caption("読者や書き方のメモは空でも進められます。必要なら補足してください。")
+    st.text_area("読者や書き方のメモ", height=110, key=KEYS["memo"])
+
+    st.text_area(
+        "トンマナ・レギュレーション（任意）",
+        height=90,
+        key=KEYS["tone_reg"],
+    )
+    st.caption("空欄なら標準設定で作成します。請負先や媒体のルールがある場合だけ入力してください。")
+
+    with st.expander("詳しいキーワード設定（任意）", expanded=False):
         main_kw = str(st.session_state.get(KEYS["main_kw"], "") or "").strip()
         if not main_kw:
             st.caption(f"メインキーワード候補：{_guess_main_kw_from_consult(str(st.session_state.get(KEYS['consult_situation'], '') or ''), str(st.session_state.get(KEYS['consult_question'], '') or ''))}")
-        st.text_input("メインキーワード", key=KEYS["main_kw"], on_change=_keep_detail_open)
+        st.text_input("メインキーワード", key=KEYS["main_kw"])
 
         sub_kw = str(st.session_state.get(KEYS["sub_kw"], "") or "").strip()
         if not sub_kw:
             st.caption("サブキーワード候補：検索キーワードの内容や相談文から自動で考えます。必要なら入れてください。")
-        st.text_input("サブキーワード", key=KEYS["sub_kw"], on_change=_keep_detail_open)
+        st.text_input("サブキーワード", key=KEYS["sub_kw"])
 
         theme = str(st.session_state.get(KEYS["theme"], "") or "").strip()
         if not theme:
             st.caption(f"記事テーマ候補：{_guess_theme_from_consult(str(st.session_state.get(KEYS['consult_situation'], '') or ''), str(st.session_state.get(KEYS['consult_question'], '') or ''))}")
-        st.text_input("記事テーマ", key=KEYS["theme"], on_change=_keep_detail_open)
+        st.text_input("記事テーマ", key=KEYS["theme"])
 
-        memo = str(st.session_state.get(KEYS["memo"], "") or "").strip()
-        if not memo:
-            st.caption("読者や書き方のメモは空でも進められます。必要なら補足してください。")
-        st.text_area("読者や書き方のメモ", height=110, key=KEYS["memo"], on_change=_keep_detail_open)
 
-        st.text_area(
-            "トンマナ・レギュレーション（任意）",
-            height=90,
-            key=KEYS["tone_reg"],
-            on_change=_keep_detail_open,
-        )
-        st.caption("空欄なら標準設定で作成します。請負先や媒体のルールがある場合だけ入力してください。")
+def _render_pre_generate_input_summary() -> None:
+    st.markdown("### 入力内容の簡単な確認")
 
-        st.markdown("### 確認先")
-        effective_evidence_text = _get_effective_input_evidence_text()
-        _render_evidence_compact_guide(effective_evidence_text)
+    situation = str(st.session_state.get(KEYS["consult_situation"], "") or "").strip()
+    question = str(st.session_state.get(KEYS["consult_question"], "") or "").strip()
+    suggest = str(st.session_state.get(KEYS["suggest"], "") or "").strip()
+    evidence_text = _get_effective_input_evidence_text().strip()
+    tone_reg = str(st.session_state.get(KEYS["tone_reg"], "") or "").strip()
 
-        _render_reference_hint_section()
-
-        # クリックのたびに再実行されると画面が飛ぶため、確認先の入力欄は
-        # st.form にまとめ、反映ボタンを押すまで再実行させない。
-        with st.form("article_detail_settings_form", clear_on_submit=False):
-            st.text_input(
-                "参照URL（確認先）",
-                key=KEYS["evidence_url"],
-            )
-            st.caption("まずは1本だけで大丈夫です。足りないときだけ後で追加してください。")
-
-            st.text_input(
-                "資料名・ページ名",
-                key=KEYS["evidence_title"],
-            )
-
-            st.text_area(
-                "大事な数字・期限",
-                height=90,
-                key=KEYS["evidence_facts"],
-            )
-            st.caption(_get_detail_help_text()["numbers"])
-
-            st.text_area(
-                "このページでいちばん大事だったこと",
-                height=120,
-                key=KEYS["evidence_points"],
-            )
-            st.caption(_get_detail_help_text()["memo"])
-
-            detail_submitted = st.form_submit_button("この確認先を下書きに反映する")
-
-        st.caption(
-            "確認先を入力したら、先に『この確認先を下書きに反映する』を押してください。"
-            "押すまで下書きには使われません。"
-        )
-
-        if detail_submitted:
-            _sync_evidence_text_from_parts()
-            _open_detail_settings()
-            # st.success はレイアウトの高さを押し下げてスクロール位置がずれやすいため、
-            # 高さに影響しない st.toast で反映完了を伝える。
-            st.toast("詳細設定を反映しました。")
-            # 自動スクロール復帰はいったん停止中（本番Streamlit Cloudで
-            # 入力・クリック中に意図しない位置へ飛ぶ不安定要因になっていたため）。
-            # _render_article_scroll_restore(restore_even_if_hash_consumed=True)
-
-        split_mode_on = _has_any_split_evidence_input()
-        legacy_evidence_text = str(st.session_state.get(KEYS["evidence"], "") or "").strip()
-        if (not split_mode_on) and (not _is_blank(legacy_evidence_text)):
-            st.info("以前の保存データの根拠が残っています。分割欄が空の間は、その根拠をそのまま使います。")
-            st.code(legacy_evidence_text, language="text")
-
-        # 空欄時に「（未入力）」の1行だけ→反映後にcode blockが丸ごと出現、という
-        # 高さ差が反映ボタン押下時のスクロール位置ずれの原因だったため、
-        # 空欄時もempty_placeholderで同じ構造(見出し＋文字数＋code block)を保つ。
-        current_generation_evidence = "\n".join(_normalize_lines(_get_generation_evidence_text()))
-        with st.container():
-            st.markdown("### AIが生成に使う要点（自動整理）")
-            _render_large_text_preview(
-                title="生成に使う要点",
-                body=current_generation_evidence,
-                show_key="article__show_current_evidence_compact",
-                preview_chars=PREVIEW_CHARS_EVIDENCE,
-                button_key_suffix="generation_compact",
-                empty_placeholder="まだ確認先が反映されていません。確認先を入力し、『この確認先を下書きに反映する』を押すと、ここに表示されます。",
-            )
+    st.caption(f"今の状況：{'入力あり' if situation else '未入力'}")
+    st.caption(f"知りたいこと：{'入力あり' if question else '未入力'}")
+    st.caption(f"検索キーワード：{suggest or '未入力（空欄でも進められます）'}")
+    st.caption(f"確認先：{'入力あり' if evidence_text else '未入力（空欄でも進められます）'}")
+    st.caption(f"トンマナ・レギュレーション：{'入力あり' if tone_reg else '未入力（標準設定を使用）'}")
 
 
 def _render_generation_summary(*, use_real_api: bool) -> None:
@@ -2559,13 +2501,7 @@ def render_article_ui(
     # _render_article_scroll_tracker()
     # if just_entered_menu:
     #     _render_article_scroll_restore(restore_even_if_hash_consumed=True)
-
-    # 画面移動サポートのst.buttonが押されていれば、その回だけ該当要素へ
-    # scrollIntoViewする。読み取ったら即座にsession_stateから消し、
-    # 次回の再実行で再度動かないようにする（one-shotリクエスト）。
-    scroll_request = st.session_state.pop(ARTICLE_SCROLL_REQUEST_KEY, None)
-    if scroll_request:
-        _render_article_scroll_to_target(str(scroll_request))
+    _ = just_entered_menu
 
     _render_sensitive_notice_box()
 
@@ -2584,38 +2520,62 @@ def render_article_ui(
 
     st.divider()
 
-    # 記事モードのステップ型UI：長い1ページ型のスクロールをやめ、
-    # 「① 入力・設定」「② 生成・確認・保存」の2区画をボタンで切り替える。
-    # 入力値はどちらの区画でも同じsession_state(KEYS)を参照するため、
-    # ステップを移動しても入力内容は消えない。
-    active_step = st.session_state.get(ARTICLE_ACTIVE_STEP_KEY, ARTICLE_STEP_INPUT)
-    _render_step_indicator()
-    _render_step_nav_buttons(position="top")
+    # 記事モードのページ区切り型UI：長い1ページ型のスクロールをやめ、
+    # 1画面あたり数項目だけの7ページに分け、「前へ」「次へ」で切り替える。
+    # 入力値はどのページでも同じsession_state(KEYS)を参照するため、
+    # ページを移動しても入力内容は消えない。
+    active_page = st.session_state.get(ARTICLE_ACTIVE_PAGE_KEY, ARTICLE_PAGE_BASIC)
+    _render_page_indicator()
+    _render_page_nav_buttons(position="top")
     st.divider()
 
-    if active_step == ARTICLE_STEP_INPUT:
-        _render_standard_inputs()
-        _render_detail_settings()
-    else:
-        _render_generate_step(
+    if active_page == ARTICLE_PAGE_BASIC:
+        _render_page_1_basic()
+    elif active_page == ARTICLE_PAGE_KEYWORD:
+        _render_page_2_keyword_and_detail_entry()
+    elif active_page == ARTICLE_PAGE_OFFICIAL:
+        _render_page_3_official_info()
+    elif active_page == ARTICLE_PAGE_STYLE:
+        _render_page_4_writing_style()
+    elif active_page == ARTICLE_PAGE_DRAFT:
+        _render_page_5_draft(
             outputs_dir=outputs_dir,
             openai_api_key=openai_api_key,
             use_real_api=use_real_api,
         )
+    elif active_page == ARTICLE_PAGE_PRECHECK:
+        _render_page_6_precheck()
+    else:
+        _render_page_7_postedit_save(outputs_dir=outputs_dir)
 
     st.divider()
-    _render_step_nav_buttons(position="bottom")
+    _render_page_nav_buttons(position="bottom")
     _backup_article_inputs()
 
 
-def _render_generate_step(
+def _render_page_5_draft(
     *,
     outputs_dir: str,
     openai_api_key: str,
     use_real_api: bool,
 ) -> None:
+    st.markdown("## ✨ 下書き作成")
+    _render_pre_generate_input_summary()
+
+    current_generation_evidence = "\n".join(_normalize_lines(_get_generation_evidence_text()))
+    with st.container():
+        st.markdown("### AIが生成に使う要点（自動整理）")
+        _render_large_text_preview(
+            title="生成に使う要点",
+            body=current_generation_evidence,
+            show_key="article__show_current_evidence_compact",
+            preview_chars=PREVIEW_CHARS_EVIDENCE,
+            button_key_suffix="generation_compact",
+            empty_placeholder="まだ確認先が反映されていません。『公式情報・確認先』ページで確認先を入力し、『この確認先を下書きに反映する』を押すと、ここに表示されます。",
+        )
+
     st.write("入力した内容をもとに、記事の下書きを作ります。あとで見直せるので、まずは出してみる感覚で大丈夫です。")
-    st.caption("確認先を入力した場合は、先に『① 入力・設定へ戻る』で詳細設定の反映ボタンを押してください。")
+    st.caption("確認先を入力した場合は、先に『公式情報・確認先』ページで反映ボタンを押してください。")
 
     if st.button("✨ 下書きを作る", use_container_width=True, key="btn_article_generate"):
         situation = str(st.session_state.get(KEYS["consult_situation"], "") or "").strip()
@@ -2723,7 +2683,6 @@ def _render_generate_step(
                 st.code(str(getattr(e, "detail", "") or str(e)), language="text")
 
     st.divider()
-    st.markdown('<div id="article-generated" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("### 📄 生成された記事")
     last_text = str(st.session_state.get(KEYS["last_text"], "") or "")
 
@@ -2732,66 +2691,8 @@ def _render_generate_step(
     else:
         _render_generation_summary(use_real_api=use_real_api)
 
-        proof_evidence = str(st.session_state.get(KEYS["proof_evidence"], "") or "").strip()
-        current_evidence = str(_get_effective_input_evidence_text()).strip()
-        guardrail_evidence, used_current_fallback = _effective_guardrail_evidence()
-
-        if used_current_fallback:
-            st.info(
-                "最後に下書きを作った時点の根拠が空のため、現在入力中の根拠を使って確認しています。"
-                "この根拠を本文にも正式に反映したい場合は、必要に応じてもう一度下書きを作ってください。"
-            )
-
-        if _is_blank(proof_evidence) and not _is_blank(current_evidence):
-            st.caption("※『今回使った確認先』は、現在入力中の根拠を使って表示している場合があります。")
-
-        level = _render_guardrail_meter(body_text=last_text, evidence_text=guardrail_evidence)
-
-        if level == "RISK":
-            st.warning("AIが作った下書きには確認したい点があります。下の本文欄で直してから、もう一度AI確認をすると安全です。")
-
-        st.markdown('<div id="article-edit-text" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
-        st.markdown("### ✍ 公開前に自分で直す本文")
-        st.caption("この欄で文章を直せます。編集前の本文を残したい場合は、先にWordなどへコピーして保管してください。")
-        st.caption("直したあとは『この文章をAIに確認してもらう』で、気になる箇所をもう一度確認できます。")
-
-        current_copy_text = str(st.session_state.get(KEYS["copy_text"], "") or "")
-        current_copy_sig = str(st.session_state.get(KEYS["copy_last_sig"], "") or "")
-        expected_sig = str(hash(last_text))
-
-        if _is_blank(current_copy_text):
-            _set_copy_state_from_text(last_text)
-            current_copy_text = str(st.session_state.get(KEYS["copy_text"], "") or "")
-            current_copy_sig = str(st.session_state.get(KEYS["copy_last_sig"], "") or "")
-
-        if current_copy_sig != expected_sig:
-            st.info("この欄の文章は、いまのAI下書きとは別に編集されています。続けて直して大丈夫です。")
-
-        st.text_area("公開前に自分で直す本文", key=KEYS["copy_text"], height=420)
-        _render_copy_button(
-            text=str(st.session_state.get(KEYS["copy_text"], "") or ""),
-            label="この本文をコピー",
-        )
-
-        st.markdown('<div id="article-actions" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
-        action_col1, action_col2 = st.columns([1, 1])
-        with action_col1:
-            check_edited = st.button(
-                "この文章をAIに確認してもらう",
-                key="btn_article_check_edited_text",
-                use_container_width=True,
-            )
-        with action_col2:
-            if st.button("💾 この文章を保存する", key="btn_article_save_file", use_container_width=True):
-                save_target = str(st.session_state.get(KEYS["copy_text"], "") or "").strip() or last_text
-                ok, message = _save_article_file(outputs_dir=outputs_dir, body_text=save_target)
-                if ok:
-                    st.success(message)
-                else:
-                    st.error(message)
-
         with st.expander("AIが最初に作った文章を見る", expanded=False):
-            st.caption("見比べたいときだけ開いてください。通常は上の本文欄だけで進められます。")
+            st.caption("見比べたいときだけ開いてください。")
             st.code(last_text, language="text")
             _render_copy_button(text=last_text, label="AI原文をコピー")
 
@@ -2801,22 +2702,7 @@ def _render_generate_step(
                 st.caption("AIが本文を書く前に作った設計図です。見出し構成・結論・最初の行動を確認できます。")
                 st.markdown(plan_result)
 
-        st.markdown('<div id="article-edited-result" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
-        if check_edited:
-            edited_text = str(st.session_state.get(KEYS["copy_text"], "") or "").strip()
-            if _is_blank(edited_text):
-                st.warning("確認する文章が空です。上の本文欄に文章を入れてください。")
-            else:
-                edited_level = _render_edited_text_check_result(edited_text=edited_text, evidence_text=guardrail_evidence)
-                if _is_latest_news_topic() and ("打撃" in edited_text or "打率" in edited_text or "出塁率" in edited_text or "安打" in edited_text):
-                    proof_ev_lower = str(guardrail_evidence or "")
-                    if ("打数" not in proof_ev_lower and "安打" not in proof_ev_lower and "打率" not in proof_ev_lower and "出塁率" not in proof_ev_lower):
-                        st.warning(
-                            "打撃まで書きたいときは、打数・安打・打率などが確認できる別の試合速報や成績ページを追加してください。"
-                            "追加できない場合は、『この資料では打撃成績までは確認できません』と控えめに書くのが安全です。"
-                        )
-                if edited_level == "SAFE":
-                    st.success("編集した文章は、大きな問題が見つかりにくい状態です。公開前に最終確認して保存できます。")
+        st.info("次のページ『公開前確認』で、本文の確認と編集ができます。")
 
     if _has_any_visible_generation_material():
         with st.expander("🔎 AIが参考にしている内容", expanded=False):
@@ -2907,3 +2793,102 @@ def _render_generate_step(
                         preview_chars=PREVIEW_CHARS_SUGGEST,
                         button_key_suffix="transparency_proof_memo",
                     )
+
+
+def _render_page_6_precheck() -> None:
+    st.markdown("## ✅ 公開前確認")
+    last_text = str(st.session_state.get(KEYS["last_text"], "") or "")
+
+    if _is_blank(last_text):
+        st.info("※まだ下書きは作られていません。『下書き作成』ページで『下書きを作る』を押してください。")
+        return
+
+    proof_evidence = str(st.session_state.get(KEYS["proof_evidence"], "") or "").strip()
+    current_evidence = str(_get_effective_input_evidence_text()).strip()
+    guardrail_evidence, used_current_fallback = _effective_guardrail_evidence()
+
+    if used_current_fallback:
+        st.info(
+            "最後に下書きを作った時点の根拠が空のため、現在入力中の根拠を使って確認しています。"
+            "この根拠を本文にも正式に反映したい場合は、必要に応じてもう一度下書きを作ってください。"
+        )
+
+    if _is_blank(proof_evidence) and not _is_blank(current_evidence):
+        st.caption("※『今回使った確認先』は、現在入力中の根拠を使って表示している場合があります。")
+
+    level = _render_guardrail_meter(body_text=last_text, evidence_text=guardrail_evidence)
+
+    if level == "RISK":
+        st.warning("AIが作った下書きには確認したい点があります。下の本文欄で直してから、次のページでもう一度AI確認をすると安全です。")
+
+    st.markdown("### ✍ 公開前に自分で直す本文")
+    st.caption("この欄で文章を直せます。編集前の本文を残したい場合は、先にWordなどへコピーして保管してください。")
+    st.caption("直したあとは、次のページの『この文章をAIに確認してもらう』で、気になる箇所をもう一度確認できます。")
+
+    current_copy_text = str(st.session_state.get(KEYS["copy_text"], "") or "")
+    current_copy_sig = str(st.session_state.get(KEYS["copy_last_sig"], "") or "")
+    expected_sig = str(hash(last_text))
+
+    if _is_blank(current_copy_text):
+        _set_copy_state_from_text(last_text)
+        current_copy_text = str(st.session_state.get(KEYS["copy_text"], "") or "")
+        current_copy_sig = str(st.session_state.get(KEYS["copy_last_sig"], "") or "")
+
+    if current_copy_sig != expected_sig:
+        st.info("この欄の文章は、いまのAI下書きとは別に編集されています。続けて直して大丈夫です。")
+
+    st.text_area("公開前に自分で直す本文", key=KEYS["copy_text"], height=420)
+    _render_copy_button(
+        text=str(st.session_state.get(KEYS["copy_text"], "") or ""),
+        label="この本文をコピー",
+    )
+
+
+def _render_page_7_postedit_save(*, outputs_dir: str) -> None:
+    st.markdown("## 💾 編集後確認・保存")
+    last_text = str(st.session_state.get(KEYS["last_text"], "") or "")
+
+    if _is_blank(last_text):
+        st.info("※まだ下書きは作られていません。『下書き作成』ページで『下書きを作る』を押してください。")
+        return
+
+    guardrail_evidence, _used_fallback = _effective_guardrail_evidence()
+    copy_text = str(st.session_state.get(KEYS["copy_text"], "") or "")
+
+    st.markdown("### 自分で直した本文")
+    if _is_blank(copy_text):
+        st.info("まだ本文を直していません。『公開前確認』ページの編集欄で直してから戻ってください。")
+    else:
+        st.code(copy_text, language="text")
+
+    action_col1, action_col2 = st.columns([1, 1])
+    with action_col1:
+        check_edited = st.button(
+            "この文章をAIに確認してもらう",
+            key="btn_article_check_edited_text",
+            use_container_width=True,
+        )
+    with action_col2:
+        if st.button("💾 この文章を保存する", key="btn_article_save_file", use_container_width=True):
+            save_target = copy_text.strip() or last_text
+            ok, message = _save_article_file(outputs_dir=outputs_dir, body_text=save_target)
+            if ok:
+                st.success(message)
+            else:
+                st.error(message)
+
+    if check_edited:
+        edited_text = copy_text.strip()
+        if _is_blank(edited_text):
+            st.warning("確認する文章が空です。『公開前確認』ページの本文欄に文章を入れてください。")
+        else:
+            edited_level = _render_edited_text_check_result(edited_text=edited_text, evidence_text=guardrail_evidence)
+            if _is_latest_news_topic() and ("打撃" in edited_text or "打率" in edited_text or "出塁率" in edited_text or "安打" in edited_text):
+                proof_ev_lower = str(guardrail_evidence or "")
+                if ("打数" not in proof_ev_lower and "安打" not in proof_ev_lower and "打率" not in proof_ev_lower and "出塁率" not in proof_ev_lower):
+                    st.warning(
+                        "打撃まで書きたいときは、打数・安打・打率などが確認できる別の試合速報や成績ページを追加してください。"
+                        "追加できない場合は、『この資料では打撃成績までは確認できません』と控えめに書くのが安全です。"
+                    )
+            if edited_level == "SAFE":
+                st.success("編集した文章は、大きな問題が見つかりにくい状態です。公開前に最終確認して保存できます。")
