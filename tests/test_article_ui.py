@@ -2,6 +2,7 @@ import inspect
 
 import streamlit as st
 
+import app
 import modules.article_ui as article_ui
 from modules.article_ui import (
     _build_article_scroll_restore_script_html,
@@ -461,6 +462,52 @@ def test_clear_form_only_clears_shadow_state_and_input_backup():
     for shadow_key in article_ui.SHADOW_KEYS.values():
         assert st.session_state[shadow_key] == ""
     assert st.session_state["article__input_backup"] == {}
+
+
+def test_sidebar_equivalent_navigation_backs_up_shadow_state_like_go_to_page():
+    # app.py側のサイドバー画面移動サポートボタンは _go_to_page を
+    # _go_to_article_page としてimportして呼ぶ（app.py:24, 847）。
+    # ここでは、その同じ関数をサイドバーの代わりに直接呼んだ場合でも、
+    # ページ下部の「次へ」「戻る」と同じ退避処理が走ることを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    st.session_state[KEYS["consult_situation"]] = "サイドバー経由の状況"
+    st.session_state[KEYS["consult_question"]] = "サイドバー経由の質問"
+    st.session_state[KEYS["suggest"]] = "サイドバーキーワード"
+    st.session_state[KEYS["tone_reg"]] = "サイドバートンマナ"
+
+    assert app._go_to_article_page is article_ui._go_to_page
+
+    app._go_to_article_page(ARTICLE_PAGE_DRAFT)
+
+    assert st.session_state[ARTICLE_ACTIVE_PAGE_KEY] == ARTICLE_PAGE_DRAFT
+    assert st.session_state["article_shadow__consult_situation"] == "サイドバー経由の状況"
+    assert st.session_state["article_shadow__consult_question"] == "サイドバー経由の質問"
+    assert st.session_state["article_shadow__search_keyword"] == "サイドバーキーワード"
+    assert st.session_state["article_shadow__tone_reg"] == "サイドバートンマナ"
+
+
+def test_sidebar_equivalent_navigation_preserves_inputs_across_render():
+    # サイドバー相当のページ移動を経ても、consult_situation / consult_question /
+    # suggest_text / tone_regulation が失われないことを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    st.session_state[KEYS["consult_situation"]] = "サイドバー経由の状況"
+    st.session_state[KEYS["consult_question"]] = "サイドバー経由の質問"
+    st.session_state[KEYS["suggest"]] = "サイドバーキーワード"
+    st.session_state[KEYS["tone_reg"]] = "サイドバートンマナ"
+
+    render_article_ui(**_common_kwargs())
+
+    # サイドバーの画面移動サポートボタンが押された時と同じ呼び出し。
+    app._go_to_article_page(ARTICLE_PAGE_OFFICIAL)
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["consult_situation"]] == "サイドバー経由の状況"
+    assert st.session_state[KEYS["consult_question"]] == "サイドバー経由の質問"
+    assert st.session_state[KEYS["suggest"]] == "サイドバーキーワード"
+    assert st.session_state[KEYS["tone_reg"]] == "サイドバートンマナ"
+    assert st.session_state[ARTICLE_ACTIVE_PAGE_KEY] == ARTICLE_PAGE_OFFICIAL
 
 
 def test_render_page_5_draft_does_not_call_scroll_tracker_or_restore():

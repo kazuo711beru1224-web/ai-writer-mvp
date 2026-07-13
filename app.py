@@ -13,7 +13,6 @@ import streamlit as st
 # 画面モジュール
 # =========================
 from modules.article_ui import (
-    ARTICLE_ACTIVE_PAGE_KEY,
     ARTICLE_PAGE_BASIC,
     ARTICLE_PAGE_KEYWORD,
     ARTICLE_PAGE_OFFICIAL,
@@ -22,6 +21,7 @@ from modules.article_ui import (
     ARTICLE_PAGE_PRECHECK,
     ARTICLE_PAGE_POSTEDIT,
     render_article_ui,
+    _go_to_page as _go_to_article_page,
 )
 from modules.home_ui import render_home_ui
 from modules.quality_ui import render_quality_ui
@@ -842,7 +842,9 @@ def _render_sidebar() -> str:
                     key=f"article_nav__page_{target_page}",
                     use_container_width=True,
                 ):
-                    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = target_page
+                    # ページ下部の「次へ」「戻る」と同じ _go_to_page() を通すことで、
+                    # 切替前の _backup_shadow_state() などの安全処理を一本化する。
+                    _go_to_article_page(target_page)
 
 
         if current_menu == MENU_CHECK:

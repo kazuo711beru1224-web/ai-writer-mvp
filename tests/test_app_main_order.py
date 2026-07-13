@@ -51,13 +51,16 @@ def test_article_mode_sidebar_navigation_has_no_url_hash_links():
 
 
 def test_article_mode_sidebar_navigation_uses_buttons_with_active_page():
-    # st.button押下でARTICLE_ACTIVE_PAGE_KEYに移動先ページ番号をセットする
-    # 構造になっていることを確認する（scrollIntoView・ARTICLE_SCROLL_REQUEST_KEY
-    # はどちらも使わない）。
+    # st.button押下で、ページ下部の「次へ」「戻る」と同じ_go_to_page()
+    # （app.py側では_go_to_article_pageとしてimport）を呼ぶ構造になっている
+    # ことを確認する（scrollIntoView・ARTICLE_SCROLL_REQUEST_KEYはどちらも
+    # 使わない）。ARTICLE_ACTIVE_PAGE_KEYを直接書き換える古い方式に戻って
+    # いないことの回帰確認でもある。
     source = inspect.getsource(app._render_sidebar)
 
     assert "st.button(" in source
-    assert "ARTICLE_ACTIVE_PAGE_KEY" in source
+    assert "_go_to_article_page(" in source
+    assert "ARTICLE_ACTIVE_PAGE_KEY] = target_page" not in source
     assert "ARTICLE_SCROLL_REQUEST_KEY" not in source
 
     for target_page in (
