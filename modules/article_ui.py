@@ -78,6 +78,26 @@ PERSIST_KEYS: Set[str] = {
     KEYS["save_message"],
 }
 
+# ページ（旧・ステップ）移動でWidgetが表示されなくなっても入力内容が
+# 消えたように見えないよう退避しておく、画面表示専用のシャドウState。
+# ファイルへの保存対象（PERSIST_KEYS）にも自動保存ダンプにも含めない、
+# セッション内だけの安全網。
+SHADOW_KEYS: Dict[str, str] = {
+    KEYS["consult_situation"]: "article_shadow__consult_situation",
+    KEYS["consult_question"]: "article_shadow__consult_question",
+    KEYS["suggest"]: "article_shadow__search_keyword",
+    KEYS["evidence_url"]: "article_shadow__evidence_url",
+    KEYS["evidence_title"]: "article_shadow__evidence_title",
+    KEYS["evidence_facts"]: "article_shadow__evidence_facts",
+    KEYS["evidence_points"]: "article_shadow__evidence_points",
+    KEYS["tone_reg"]: "article_shadow__tone_reg",
+    KEYS["main_kw"]: "article_shadow__main_kw",
+    KEYS["sub_kw"]: "article_shadow__sub_kw",
+    KEYS["theme"]: "article_shadow__theme",
+}
+
+ARTICLE_AUTOSAVE_FILENAME = "autosave_state.json"
+
 UI_FLAG_KEYS: Tuple[str, ...] = (
     "article__show_current_evidence",
     "article__show_current_suggest",
@@ -212,6 +232,9 @@ def _ensure_active_page_initialized() -> None:
 
 
 def _go_to_page(page: int) -> None:
+    # ページを切り替える前に、今表示している入力内容をシャドウStateへ
+    # 退避しておく（切り替え後に表示されない欄の値が消えて見えないように）。
+    _backup_shadow_state()
     st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = page
 
 
@@ -645,6 +668,28 @@ def _restore_article_inputs_from_backup() -> None:
 
 def _clear_article_input_backup() -> None:
     st.session_state["article__input_backup"] = {}
+
+
+def _backup_shadow_state() -> None:
+    """
+    主要な入力欄の現在値をシャドウStateへ退避する。
+    on_changeではなく、描画後バックアップやページ移動ボタン押下時にだけ
+    呼び出す（副作用を最小限にするため）。
+    """
+    for widget_key, shadow_key in SHADOW_KEYS.items():
+        value = st.session_state.get(widget_key, "")
+        if not _is_blank(value):
+            st.session_state[shadow_key] = str(value)
+
+
+def _restore_shadow_state_to_blanks() -> None:
+    """Widgetキーが空で、対応するシャドウStateに値があれば戻す。"""
+    for widget_key, shadow_key in SHADOW_KEYS.items():
+        current = st.session_state.get(widget_key, "")
+        if _is_blank(current):
+            shadow_value = st.session_state.get(shadow_key, "")
+            if not _is_blank(shadow_value):
+                st.session_state[widget_key] = str(shadow_value)
 
 
 def _save_snapshot() -> None:
@@ -1081,6 +1126,58 @@ def _is_latest_news_topic() -> bool:
 
 def _is_forecast_topic() -> bool:
     return _current_question_type() == "forecast"
+
+
+def _all_primary_inputs_blank() -> bool:
+    check_keys = (
+        KEYS["main_kw"], KEYS["sub_kw"], KEYS["theme"], KEYS["memo"],
+        KEYS["tone_reg"],
+        KEYS["consult_situation"], KEYS["consult_question"],
+        KEYS["evidence_url"], KEYS["evidence_title"], KEYS["evidence_facts"], KEYS["evidence_points"],
+        KEYS["evidence"], KEYS["suggest"],
+    )
+    return all(_is_blank(st.session_state.get(k, "")) for k in check_keys)
+
+
+def _get_autosave_last_saved_label(logs_dir: str) -> str:
+    try:
+        fp = Path(str(logs_dir or "")) / ARTICLE_AUTOSAVE_FILENAME
+        if not fp.exists():
+            return ""
+        dt = datetime.fromtimestamp(fp.stat().st_mtime, tz=ZoneInfo("Asia/Tokyo"))
+        return dt.strftime("%H:%M")
+    except OSError:
+        return ""
+
+
+def _request_body_autosave_restore() -> None:
+    # 本文側の復元ボタンも、サイドバーと同じ既存の復元処理（app.py側の
+    # backup__restore_request / backup__restore_target を使う仕組み）に
+    # 誘導するだけで、新しい復元方式は作らない。
+    st.session_state["backup__restore_request"] = True
+    st.session_state["backup__restore_target"] = ARTICLE_AUTOSAVE_FILENAME
+    st.session_state["tmp__restore_prompt_dismissed"] = True
+
+
+def _render_save_restore_notice(*, logs_dir: str) -> None:
+    st.caption(
+        "前回の入力内容が残っている場合は復元できます。"
+        "入力欄が空の場合でも、保存済みデータが残っている可能性があります。"
+    )
+
+    last_saved_label = _get_autosave_last_saved_label(logs_dir)
+    if last_saved_label:
+        st.caption(f"最終保存：{last_saved_label}（日本時間）")
+
+    if last_saved_label and _all_primary_inputs_blank():
+        st.warning("入力欄が空ですが、前回の保存データが残っている可能性があります。復元できます。")
+        if st.button(
+            "前回の保存データを復元する",
+            key="btn_article_body_restore_autosave",
+            use_container_width=True,
+        ):
+            _request_body_autosave_restore()
+            st.rerun()
 
 
 def _render_sensitive_notice_box() -> None:
@@ -2486,10 +2583,10 @@ def render_article_ui(
     use_real_api: bool,
     just_entered_menu: bool = False,
 ) -> None:
-    _ = logs_dir
     _ensure_keys_initialized()
     _ensure_article_input_backup()
     _restore_article_inputs_from_backup()
+    _restore_shadow_state_to_blanks()
 
     # 記事モードの自動スクロール保存・自動復帰（tracker/restore）はいったん
     # 停止中。本番Streamlit Cloudで、入力・クリック・詳細設定の開閉など
@@ -2503,6 +2600,7 @@ def render_article_ui(
     #     _render_article_scroll_restore(restore_even_if_hash_consumed=True)
     _ = just_entered_menu
 
+    _render_save_restore_notice(logs_dir=logs_dir)
     _render_sensitive_notice_box()
 
     msg = str(st.session_state.get(KEYS["save_message"], "") or "").strip()
@@ -2551,6 +2649,7 @@ def render_article_ui(
     st.divider()
     _render_page_nav_buttons(position="bottom")
     _backup_article_inputs()
+    _backup_shadow_state()
 
 
 def _render_page_5_draft(

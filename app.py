@@ -224,6 +224,7 @@ STATE_EXCLUDE_PREFIXES = (
     "_",
     "btn_",
     "tmp__",
+    "article_shadow__",
 )
 
 
