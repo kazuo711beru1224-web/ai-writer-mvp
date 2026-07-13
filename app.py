@@ -707,6 +707,13 @@ def _render_sidebar() -> str:
         _render_autosave_restore_prompt(LOGS_DIR)
 
         st.markdown("### 🔐 AI下書き作成の設定")
+        # APIキーの入力状態に関わらず、常にキー作成ページへの導線を出しておく
+        # （キー入力後や失効時にリンクが見えなくなる問題への対応）。
+        st.link_button(
+            "OpenAIのAPIキー作成ページを開く",
+            "https://platform.openai.com/settings/organization/api-keys",
+            use_container_width=True,
+        )
         st.text_input(
             "OpenAI APIキー",
             key="openai_api_key",

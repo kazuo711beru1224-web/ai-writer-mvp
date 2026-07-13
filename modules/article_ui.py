@@ -110,6 +110,7 @@ UI_FLAG_KEYS: Tuple[str, ...] = (
     "article__legacy_migrated",
     "article__show_legacy_evidence_help",
     "article__show_reference_hint",
+    "article__show_detail_assist_hint",
 )
 
 EVIDENCE_WARN_CHARS = 2500
@@ -195,8 +196,6 @@ QUESTION_TYPE_LABELS: Dict[str, str] = {
     "general": "一般整理系",
 }
 
-DETAIL_OPEN_KEY = "article__detail_open"
-
 # 確認先の探し方ヒントの開閉状態。_evidence_inputs_are_thin()に連動させると
 # フォーム送信のたびに表示/非表示が切り替わり高さが変わってしまうため、
 # ここだけで完結する独立フラグで管理する。
@@ -281,19 +280,6 @@ def _render_page_nav_buttons(*, position: str) -> None:
                 on_click=_go_to_page,
                 args=(page + 1,),
             )
-
-
-def _ensure_detail_open_initialized() -> None:
-    if DETAIL_OPEN_KEY not in st.session_state:
-        st.session_state[DETAIL_OPEN_KEY] = False
-
-
-def _open_detail_settings() -> None:
-    st.session_state[DETAIL_OPEN_KEY] = True
-
-
-def _close_detail_settings() -> None:
-    st.session_state[DETAIL_OPEN_KEY] = False
 
 
 def get_article_persist_keys() -> set[str]:
@@ -512,7 +498,6 @@ def _ensure_keys_initialized() -> None:
         st.session_state[KEYS["copy_last_sig"]] = ""
 
     _ensure_ui_flags_initialized()
-    _ensure_detail_open_initialized()
     _ensure_active_page_initialized()
     _migrate_legacy_keys_once()
 
@@ -729,7 +714,6 @@ def _clear_form_only() -> None:
     ):
         st.session_state[k] = ""
     _clear_article_input_backup()
-    _close_detail_settings()
     st.session_state[KEYS["save_message"]] = "入力欄を空にしました。最初から整理し直したいときに使えます。"
 
 
@@ -755,7 +739,6 @@ def _clear_generated_only() -> None:
     st.session_state["api__status_detail"] = ""
     st.session_state["api__last_runtime_error"] = ""
 
-    _close_detail_settings()
     st.session_state[KEYS["save_message"]] = "下書きと入力内容を消しました。新しい内容で始められます。"
 
 
@@ -934,10 +917,11 @@ def _guess_memo_from_consult(situation: str, question: str) -> str:
     blob = f"{situation}\n{question}".strip()
     domain = _detect_consult_domain(blob)
 
+    # 文体・言い回しのルールは「トンマナ・レギュレーション」欄の役割のため、
+    # ここでは「誰に向けて書くか」「何を優先して伝えるか」に関する内容だけに絞る。
     bullets: List[str] = [
         "・一般の人にもわかりやすく説明する",
         "・専門用語はかみくだいて説明する",
-        "・です・ます調に統一する",
     ]
 
     if domain == "pension":
@@ -999,15 +983,17 @@ def _ensure_basic_fields_from_standard_inputs() -> None:
         st.session_state[KEYS["memo"]] = _guess_memo_from_consult(situation, question)
 
 
-def _apply_consult_to_article_inputs() -> None:
+def _apply_consult_to_article_inputs() -> bool:
+    """
+    「入力内容から詳細設定を自動補助する」ボタンの処理本体。
+    戻り値は、実際に反映できたかどうか（呼び出し側でメッセージの出し分けに使う）。
+    """
     situation = str(st.session_state.get(KEYS["consult_situation"], "") or "").strip()
     question = str(st.session_state.get(KEYS["consult_question"], "") or "").strip()
 
     if not situation and not question:
-        st.session_state[KEYS["save_message"]] = "相談内容が空のため、整理できませんでした。"
-        return
-
-    _open_detail_settings()
+        st.session_state[KEYS["save_message"]] = "相談内容が空のため、整理できませんでした。先に「今の状況」か「知りたいこと」を入力してください。"
+        return False
 
     st.session_state[KEYS["main_kw"]] = _guess_main_kw_from_consult(situation, question)
     guessed_suggest = _guess_suggest_from_consult(situation, question)
@@ -1018,13 +1004,22 @@ def _apply_consult_to_article_inputs() -> None:
     st.session_state[KEYS["theme"]] = _guess_theme_from_consult(situation, question)
     st.session_state[KEYS["memo"]] = _guess_memo_from_consult(situation, question)
 
+    st.session_state["article__show_detail_assist_hint"] = True
+
     if _is_blank(current_suggest):
         st.session_state[KEYS["save_message"]] = (
-            "相談内容を整理して詳細設定に反映しました。"
-            "検索キーワード欄は標準入力側のため自動では上書きしていません。必要なら手で追加してください。"
+            "詳細設定を補助しました。"
+            "反映先：読者や書き方のメモ、詳しいキーワード設定（メインキーワード・サブキーワード・記事テーマ）。"
+            "検索キーワード欄は自動では上書きしていません。"
+            "必要なら次のページで自由に直してください。"
         )
     else:
-        st.session_state[KEYS["save_message"]] = "相談内容を整理して、詳細設定に反映しました。必要なときだけ開いて確認してください。"
+        st.session_state[KEYS["save_message"]] = (
+            "詳細設定を補助しました。"
+            "反映先：読者や書き方のメモ、詳しいキーワード設定（メインキーワード・サブキーワード・記事テーマ）。"
+            "必要なら次のページで自由に直してください。"
+        )
+    return True
 
 
 def _classify_question_type(blob: str) -> str:
@@ -2423,7 +2418,16 @@ def _render_page_2_keyword_and_detail_entry() -> None:
     st.caption("通常は空欄のままで大丈夫です。精度を上げたいときだけ、次以降のページで入力してください。")
 
     if st.button("入力内容から詳細設定を自動補助する", key="btn_apply_consult_into_detail", use_container_width=True):
-        _apply_consult_to_article_inputs()
+        # トップの案内メッセージ表示は次の再描画まで出ないため、押した直後に
+        # ここでも同じ内容をその場で表示する（購入者が反応に気づけるように）。
+        applied = _apply_consult_to_article_inputs()
+        inline_msg = str(st.session_state.get(KEYS["save_message"], "") or "").strip()
+        if inline_msg:
+            if applied:
+                st.success(inline_msg)
+            else:
+                st.warning(inline_msg)
+            st.session_state[KEYS["save_message"]] = ""
 
 
 def _render_page_3_official_info() -> None:
@@ -2435,6 +2439,11 @@ def _render_page_3_official_info() -> None:
 
     _render_reference_hint_section()
 
+    st.warning(
+        "このページの内容は、『この確認先を下書きに反映する』を押すまで下書きには使われません。"
+        "ページを移動する前に、入力後は必ず反映ボタンを押してください。"
+    )
+
     # クリックのたびに再実行されると画面が飛ぶため、確認先の入力欄は
     # st.form にまとめ、反映ボタンを押すまで再実行させない。
     with st.form("article_detail_settings_form", clear_on_submit=False):
@@ -2444,7 +2453,8 @@ def _render_page_3_official_info() -> None:
         )
         st.caption(
             "公式ページを見つけている場合はURLを貼ってください。分からなければ空欄で大丈夫です。"
-            "次の段階で、AIが公式ページの候補を探します。"
+            "現在は、AIが自動で公式URLを取得する機能は未完成です。"
+            "分からない場合は、下の『書類名・検索語』に思いつく言葉だけ入れてください。"
         )
 
         st.text_input(
@@ -2494,9 +2504,14 @@ def _render_page_4_writing_style() -> None:
     st.markdown("## ✏️ 書き方の希望")
     st.caption("通常は空欄でも大丈夫です。必要なときだけ入力してください。")
 
+    show_assist_hint = bool(st.session_state.get("article__show_detail_assist_hint", False))
+
     memo = str(st.session_state.get(KEYS["memo"], "") or "").strip()
+    st.caption("読者や書き方のメモ：誰に向けて書くか、何を優先して伝えるかを書いてください。")
     if not memo:
-        st.caption("読者や書き方のメモは空でも進められます。必要なら補足してください。")
+        st.caption("空でも進められます。必要なら補足してください。")
+    elif show_assist_hint:
+        st.caption("入力内容から自動補助しました。必要なら自由に直してください。")
     st.text_area("読者や書き方のメモ", height=110, key=KEYS["memo"])
 
     st.text_area(
@@ -2504,9 +2519,12 @@ def _render_page_4_writing_style() -> None:
         height=90,
         key=KEYS["tone_reg"],
     )
-    st.caption("空欄なら標準設定で作成します。請負先や媒体のルールがある場合だけ入力してください。")
+    st.caption("トンマナ・レギュレーション：文体、禁止表現、言い回しのルールを書いてください。空欄なら標準設定で作成します。")
 
-    with st.expander("詳しいキーワード設定（任意）", expanded=False):
+    with st.expander("詳しいキーワード設定（任意）", expanded=show_assist_hint):
+        if show_assist_hint:
+            st.caption("入力内容から自動補助しました。必要なら自由に直してください。")
+
         main_kw = str(st.session_state.get(KEYS["main_kw"], "") or "").strip()
         if not main_kw:
             st.caption(f"メインキーワード候補：{_guess_main_kw_from_consult(str(st.session_state.get(KEYS['consult_situation'], '') or ''), str(st.session_state.get(KEYS['consult_question'], '') or ''))}")

@@ -82,7 +82,11 @@ def render_official_procedure_ui(
     )
 
     st.markdown("### 5. すでに見つけた公式URL")
-    st.caption("公式ページを見つけている場合はURLを貼ってください。分からなければ空欄で大丈夫です。次の段階で、AIが公式ページの候補を探します。")
+    st.caption(
+        "公式ページを見つけている場合はURLを貼ってください。分からなければ空欄で大丈夫です。"
+        "現在は、AIが自動で公式URLを取得する機能は未完成です。"
+        "分からない場合は、下の『すでに分かっている書類名・検索語』に思いつく言葉だけ入れてください。"
+    )
     st.text_input(
         "すでに見つけた公式URL",
         placeholder="例：https://www.moj.go.jp/ または https://houmukyoku.moj.go.jp/",
@@ -133,7 +137,7 @@ def render_official_procedure_ui(
         if official_url:
             st.write(official_url)
         else:
-            st.write("未入力です。公式URLが分からない場合は、空欄で大丈夫です。次の段階で、AIが公式ページの候補を探します。")
+            st.write("未入力です。公式URLが分からない場合は、空欄で大丈夫です。分かる場合は書類名・検索語だけでも入れてください。")
 
         st.markdown("**6. すでに分かっている書類名・検索語**")
         st.write(known_docs if known_docs else "未入力です。")
@@ -155,13 +159,13 @@ def render_official_procedure_ui(
         check_items.append("地域・管轄が未入力です。分からなければ空欄でも大丈夫ですが、都道府県や市区町村があると整理しやすくなります。")
 
     if not official_url:
-        check_items.append("公式URLは未入力です。分からなくても大丈夫です。次の段階で、AIが公式ページの候補を探します。")
+        check_items.append("公式URLは未入力です。分からなくても大丈夫です。分かる場合は書類名・検索語だけでも入れてください。")
 
     if not known_docs:
         check_items.append("書類名・検索語が未入力です。分かる言葉だけで大丈夫です。例：変更登記、申請書、代表者変更など。")
 
     if not check_items:
-        check_items.append("入力内容はそろっています。次の段階で、公式ページ候補や探すべき書類名を整理します。")
+        check_items.append("入力内容はそろっています。次の段階で、入力内容をもとに整理します。")
 
     for i, item in enumerate(check_items, start=1):
         st.write(f"{i}. {item}")
