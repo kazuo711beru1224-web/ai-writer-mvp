@@ -410,6 +410,59 @@ def test_input_values_survive_switching_between_pages():
     assert st.session_state[ARTICLE_ACTIVE_PAGE_KEY] == ARTICLE_PAGE_DRAFT
 
 
+def test_shadow_state_restores_blank_field_only_on_page_change():
+    # ページを移動した直後は、空欄になっている項目がシャドウStateから
+    # 復元されること（意図した挙動が壊れていないことの回帰確認）。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    st.session_state[KEYS["suggest"]] = "keyword A"
+
+    render_article_ui(**_common_kwargs())
+    assert st.session_state["article_shadow__search_keyword"] == "keyword A"
+
+    # 何らかの理由で欄が空になった状態で、実際にページ移動が起きたとする。
+    st.session_state[KEYS["suggest"]] = ""
+    article_ui._go_to_page(ARTICLE_PAGE_DRAFT)
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["suggest"]] == "keyword A"
+
+
+def test_cleared_value_does_not_revive_on_same_page_rerender():
+    # 「消したのに戻る」問題の回帰確認。
+    # 同じページ内の再描画（ページ移動なし）では、利用者が今まさに空にした
+    # 欄へ、古いシャドウStateの値を書き戻してはいけない。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    st.session_state[KEYS["suggest"]] = "keyword A"
+
+    render_article_ui(**_common_kwargs())
+    assert st.session_state["article_shadow__search_keyword"] == "keyword A"
+
+    # ページは移動せず、欄だけ意図的に空にする。
+    st.session_state[KEYS["suggest"]] = ""
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["suggest"]] == ""
+
+
+def test_clear_form_only_clears_shadow_state_and_input_backup():
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    st.session_state[KEYS["consult_situation"]] = "テスト用の状況"
+    st.session_state[KEYS["suggest"]] = "keyword A"
+
+    render_article_ui(**_common_kwargs())
+    assert st.session_state["article_shadow__consult_situation"] == "テスト用の状況"
+    assert st.session_state["article__input_backup"][KEYS["consult_situation"]] == "テスト用の状況"
+
+    article_ui._clear_form_only()
+
+    for shadow_key in article_ui.SHADOW_KEYS.values():
+        assert st.session_state[shadow_key] == ""
+    assert st.session_state["article__input_backup"] == {}
+
+
 def test_render_page_5_draft_does_not_call_scroll_tracker_or_restore():
     # ページ5(下書き作成)の中身にも、自動スクロール保存・自動復帰の呼び出しが
     # 紛れ込んでいないことを回帰確認する。

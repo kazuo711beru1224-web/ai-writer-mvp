@@ -224,6 +224,11 @@ ARTICLE_PAGE_LABELS: Dict[int, str] = {
     ARTICLE_PAGE_POSTEDIT: "編集後確認・保存",
 }
 
+# シャドウStateからの復元(_restore_shadow_state_to_blanks)を、実際に
+# ページが切り替わった直後だけ行うための「最後に復元した時点のページ番号」。
+# 画面表示専用の値なので、PERSIST_KEYSには含めない。
+ARTICLE_SHADOW_RESTORED_PAGE_KEY = "article__shadow_restored_page"
+
 
 def _ensure_active_page_initialized() -> None:
     if ARTICLE_ACTIVE_PAGE_KEY not in st.session_state:
@@ -677,6 +682,29 @@ def _restore_shadow_state_to_blanks() -> None:
                 st.session_state[widget_key] = str(shadow_value)
 
 
+def _clear_shadow_state() -> None:
+    """シャドウStateを空にする（入力欄クリア系の操作と一緒に呼ぶ）。"""
+    for shadow_key in SHADOW_KEYS.values():
+        st.session_state[shadow_key] = ""
+
+
+def _restore_stale_inputs_on_page_change() -> None:
+    """
+    _restore_shadow_state_to_blanks() / _restore_article_inputs_from_backup() は
+    どちらも「今のWidget値が空なら、退避してあった値で埋める」処理のため、
+    同じページ内の再描画のたびに毎回呼び出すと、利用者が今まさに空にした
+    欄へ古い値を書き戻してしまう（消したのに戻る）。
+    そのため、実際にページ（active_page）が切り替わった直後だけ呼び出す。
+    """
+    current_page = st.session_state.get(ARTICLE_ACTIVE_PAGE_KEY, ARTICLE_PAGE_BASIC)
+    last_restored_page = st.session_state.get(ARTICLE_SHADOW_RESTORED_PAGE_KEY)
+    if last_restored_page == current_page:
+        return
+    _restore_article_inputs_from_backup()
+    _restore_shadow_state_to_blanks()
+    st.session_state[ARTICLE_SHADOW_RESTORED_PAGE_KEY] = current_page
+
+
 def _save_snapshot() -> None:
     st.session_state[KEYS["snapshot"]] = _take_snapshot()
     st.session_state[KEYS["save_message"]] = "今の状態を控えました。あとで戻したいときに使えます。"
@@ -714,6 +742,7 @@ def _clear_form_only() -> None:
     ):
         st.session_state[k] = ""
     _clear_article_input_backup()
+    _clear_shadow_state()
     st.session_state[KEYS["save_message"]] = "入力欄を空にしました。最初から整理し直したいときに使えます。"
 
 
@@ -730,6 +759,7 @@ def _clear_generated_only() -> None:
         st.session_state[k] = ""
 
     _clear_article_input_backup()
+    _clear_shadow_state()
     st.session_state[KEYS["snapshot"]] = {}
     _reset_copy_state()
     _reset_ui_flags()
@@ -2603,8 +2633,7 @@ def render_article_ui(
 ) -> None:
     _ensure_keys_initialized()
     _ensure_article_input_backup()
-    _restore_article_inputs_from_backup()
-    _restore_shadow_state_to_blanks()
+    _restore_stale_inputs_on_page_change()
 
     # 記事モードの自動スクロール保存・自動復帰（tracker/restore）はいったん
     # 停止中。本番Streamlit Cloudで、入力・クリック・詳細設定の開閉など
@@ -2951,7 +2980,9 @@ def _render_page_6_precheck() -> None:
         current_copy_text = str(st.session_state.get(KEYS["copy_text"], "") or "")
         current_copy_sig = str(st.session_state.get(KEYS["copy_last_sig"], "") or "")
 
-    if current_copy_sig != expected_sig:
+    if current_copy_sig == expected_sig:
+        st.info("AI初稿を編集用にコピーしています。必要なところだけ直してください。直さない場合は、このまま次へ進めます。")
+    else:
         st.info("この欄の文章は、いまのAI下書きとは別に編集されています。続けて直して大丈夫です。")
 
     st.text_area("公開前に自分で直す本文", key=KEYS["copy_text"], height=420)
@@ -2972,9 +3003,9 @@ def _render_page_7_postedit_save(*, outputs_dir: str) -> None:
     guardrail_evidence, _used_fallback = _effective_guardrail_evidence()
     copy_text = str(st.session_state.get(KEYS["copy_text"], "") or "")
 
-    st.markdown("### 自分で直した本文")
+    st.markdown("### 保存する本文")
     if _is_blank(copy_text):
-        st.info("まだ本文を直していません。『公開前確認』ページの編集欄で直してから戻ってください。")
+        st.info("まだ自分では直していません。『公開前確認』ページの編集欄で直してから戻ってください。")
     else:
         st.code(copy_text, language="text")
 

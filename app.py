@@ -670,7 +670,11 @@ def _handle_pending_restore(logs_dir: Path) -> None:
         st.session_state["backup__at"] = restored_at
         st.session_state["backup__last_saved_work_at"] = restored_at
         st.session_state["backup__restore_status_kind"] = "success"
-        st.session_state["backup__restore_status_text"] = f"保存していた状態に戻しました。（記録日時：{restored_at} 日本時間）"
+        st.session_state["backup__restore_status_text"] = (
+            f"保存していた状態に戻しました。（記録日時：{restored_at} 日本時間）"
+            "本文入力、検索キーワード、公式URL、資料名、トンマナ、AI下書き本文などを復元しました。"
+            "APIキーは安全のため復元されません。"
+        )
         st.session_state["menu_request"] = MENU_ARTICLE
         st.rerun()
     except Exception as e:
@@ -720,6 +724,7 @@ def _render_sidebar() -> str:
             type="password",
             help="AIで下書きを作成するときだけ入力します。",
         )
+        st.caption("安全のため、APIキーは自動保存・復元されません。スリープ復帰後や再読み込み後は、必要に応じて再入力してください。")
         st.write("APIキーは、AI下書きを使うための大事な鍵です。")
         st.warning("人に見せたり、LINEやメールで送ったりしないでください。")
         with st.expander("APIキーを安全に使うために"):
