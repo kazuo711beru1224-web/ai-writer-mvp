@@ -25,7 +25,7 @@ from modules.article_ui import (
     _go_to_page as _go_to_article_page,
 )
 from modules.home_ui import render_home_ui
-from modules.quality_ui import render_quality_ui
+from modules.quality_ui import render_quality_ui, QUALITY_MENU_LABEL
 from modules.official_procedure_ui import render_official_procedure_ui
 
 try:
@@ -57,7 +57,7 @@ AUTOSAVE_FILENAME = "autosave_state.json"
 
 MENU_HOME = "ホーム"
 MENU_ARTICLE = "記事モード（SEOライティング）"
-MENU_CHECK = "文章チェック（手動入力）"
+MENU_CHECK = QUALITY_MENU_LABEL
 MENU_OFFICIAL = "公式手続きナビ（登記・役所・税金）"
 MENU_HISTORY = "生成履歴"
 MENU_TERMS = "利用規約"
@@ -876,8 +876,8 @@ def _render_sidebar() -> str:
                 (ARTICLE_PAGE_OFFICIAL, "3. \u516c\u5f0f\u60c5\u5831\u3078"),
                 (ARTICLE_PAGE_STYLE, "4. \u66f8\u304d\u65b9\u306e\u5e0c\u671b\u3078"),
                 (ARTICLE_PAGE_DRAFT, "5. \u4e0b\u66f8\u304d\u4f5c\u6210\u3078"),
-                (ARTICLE_PAGE_PRECHECK, "6. \u516c\u958b\u524d\u78ba\u8a8d\u3078"),
-                (ARTICLE_PAGE_POSTEDIT, "7. \u7de8\u96c6\u5f8c\u78ba\u8a8d\u30fb\u4fdd\u5b58\u3078"),
+                (ARTICLE_PAGE_PRECHECK, "6. \u4e0b\u66f8\u304d\u306e\u78ba\u8a8d\u3078"),
+                (ARTICLE_PAGE_POSTEDIT, "7. \u6587\u7ae0\u30c1\u30a7\u30c3\u30af\u3078\u9032\u3080\u753b\u9762\u3078"),
             ):
                 if st.button(
                     label,

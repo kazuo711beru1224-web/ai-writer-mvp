@@ -763,56 +763,81 @@ def test_generate_draft_reads_form_data_directly_without_backup_or_shadow(monkey
     assert str(st.session_state.get(KEYS["last_text"], "")).strip() != ""
 
 
-def test_copy_text_edit_survives_widget_key_pruning():
-    # 6/7でcopy_textを編集した後、widget keyがStreamlitの仕様で消えても、
-    # form_dataには編集内容が残ることを確認する。
-    _reset_session_state()
-    article_ui._set_form_data_value("last_text", "AIが作った初稿です。")
-    st.session_state[KEYS["copy_text"]] = "利用者が手直しした本文です。"
-    article_ui._sync_form_data_field_from_widget("copy_text")
-
-    del st.session_state[KEYS["copy_text"]]
-
-    assert article_ui._get_form_data_value("copy_text") == "利用者が手直しした本文です。"
-
-
-def test_copy_text_edit_survives_page6_to_page7_and_back():
-    # 6/7でcopy_textを編集→7/7へ進む→6/7へ戻っても消えないことを確認する。
+def test_page6_does_not_render_manual_edit_text_area(monkeypatch):
+    # 記事モードの役割を「AI下書きを作る場所」に戻すため、6/7には手動編集用の
+    # 大きなst.text_areaを置かないことを確認する（回帰防止）。
     _reset_session_state()
     st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_PRECHECK
     st.session_state[KEYS["last_text"]] = "AIが作った初稿です。"
     article_ui._set_form_data_value("last_text", "AIが作った初稿です。")
 
-    render_article_ui(**_common_kwargs())  # ページ6を描画し、AI初稿からcopy_textを自動コピーさせる
+    text_area_calls = []
+    monkeypatch.setattr(st, "text_area", lambda *a, **k: text_area_calls.append((a, k)))
 
-    # 利用者が本文を手直しする。
-    st.session_state[KEYS["copy_text"]] = "利用者が手直しした本文です。"
-    article_ui._sync_form_data_field_from_widget("copy_text")
+    render_article_ui(**_common_kwargs())
 
-    article_ui._go_to_page(ARTICLE_PAGE_POSTEDIT)
-    render_article_ui(**_common_kwargs())  # ページ7を描画（copy_textのwidgetは描画されない）
-
-    article_ui._go_to_page(ARTICLE_PAGE_PRECHECK)
-    render_article_ui(**_common_kwargs())  # ページ6へ戻る
-
-    assert article_ui._get_form_data_value("copy_text") == "利用者が手直しした本文です。"
-    assert st.session_state[KEYS["copy_text"]] == "利用者が手直しした本文です。"
+    assert text_area_calls == []
 
 
-def test_page7_shows_form_data_copy_text(monkeypatch):
-    # 7/7の「保存する本文」がform_data["copy_text"]を見ることを確認する。
+def test_page6_shows_last_text_readonly(monkeypatch):
+    # 6/7はlast_textを読み取り専用で表示することを確認する。
     _reset_session_state()
-    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_POSTEDIT
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_PRECHECK
     st.session_state[KEYS["last_text"]] = "AIが作った初稿です。"
     article_ui._set_form_data_value("last_text", "AIが作った初稿です。")
-    article_ui._set_form_data_value("copy_text", "利用者が手直しした本文です。")
 
     captured_code = []
     monkeypatch.setattr(st, "code", lambda text, **kwargs: captured_code.append(text))
 
     render_article_ui(**_common_kwargs())
 
-    assert "利用者が手直しした本文です。" in captured_code
+    assert "AIが作った初稿です。" in captured_code
+
+
+def test_page7_does_not_render_manual_edit_text_area(monkeypatch):
+    # 7/7にも大きな手動編集欄は置かないことを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_POSTEDIT
+    st.session_state[KEYS["last_text"]] = "AIが作った初稿です。"
+    article_ui._set_form_data_value("last_text", "AIが作った初稿です。")
+
+    text_area_calls = []
+    monkeypatch.setattr(st, "text_area", lambda *a, **k: text_area_calls.append((a, k)))
+
+    render_article_ui(**_common_kwargs())
+
+    assert text_area_calls == []
+
+
+def test_page7_shows_check_mode_handoff_not_save_body(monkeypatch):
+    # 7/7は「保存する本文」ではなく、文章チェックへ進む導線になっていることを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_POSTEDIT
+    st.session_state[KEYS["last_text"]] = "AIが作った初稿です。"
+    article_ui._set_form_data_value("last_text", "AIが作った初稿です。")
+
+    markdown_calls = []
+    monkeypatch.setattr(st, "markdown", lambda text, **kwargs: markdown_calls.append(text))
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: False)
+
+    render_article_ui(**_common_kwargs())
+
+    assert not any("保存する本文" in text for text in markdown_calls)
+    assert any("文章チェック" in text for text in markdown_calls)
+
+
+def test_send_last_text_to_check_mode_fills_quality_inputs_and_requests_menu():
+    # last_textが文章チェックモード用の入力欄に渡せることを確認する。
+    _reset_session_state()
+    st.session_state[KEYS["last_text"]] = "AIが作った初稿です。"
+
+    article_ui._send_last_text_to_check_mode()
+
+    from modules.quality_ui import KEYS as quality_keys, QUALITY_MENU_LABEL
+
+    assert st.session_state[quality_keys["check_text_saved"]] == "AIが作った初稿です。"
+    assert st.session_state[quality_keys["check_text_widget"]] == "AIが作った初稿です。"
+    assert st.session_state["menu_request"] == QUALITY_MENU_LABEL
 
 
 def test_last_text_does_not_overwrite_edited_copy_text_on_regenerate(monkeypatch):
@@ -830,19 +855,6 @@ def test_last_text_does_not_overwrite_edited_copy_text_on_regenerate(monkeypatch
 
     assert str(st.session_state.get(KEYS["last_text"], "")).strip() != ""
     assert article_ui._get_form_data_value("copy_text") == "利用者が手直しした本文です。"
-
-
-def test_copy_text_auto_copied_from_last_text_only_when_blank():
-    # copy_textが空の場合だけ、AI初稿(last_text)から初回コピーされることを確認する。
-    _reset_session_state()
-    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_PRECHECK
-    st.session_state[KEYS["last_text"]] = "AIが作った初稿です。"
-    article_ui._set_form_data_value("last_text", "AIが作った初稿です。")
-    # copy_textは空のまま。
-
-    render_article_ui(**_common_kwargs())
-
-    assert article_ui._get_form_data_value("copy_text") == "AIが作った初稿です。"
 
 
 def test_clear_form_only_empties_form_data_basic_inputs():

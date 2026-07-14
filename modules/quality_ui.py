@@ -14,6 +14,12 @@ from modules.style_checker import check_style
 from modules.diagnosis_templates import build_buyer_diagnosis
 
 
+# 記事モード（article_ui.py）から「文章チェックへ進む」導線で参照する、
+# サイドバーメニュー名の正本。app.pyのMENU_CHECKもここを参照することで、
+# 別々の場所に同じ文字列を重複させて表記ゆれが起きるのを防ぐ。
+QUALITY_MENU_LABEL = "文章チェック（手動入力）"
+
+
 # =========================
 # ベル憲法：状態キー固定
 # =========================
@@ -1003,7 +1009,7 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
     _ensure_state()
 
     st.markdown('<div id="quality-top" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
-    st.markdown("## 文章チェック（手動入力）")
+    st.markdown(f"## {QUALITY_MENU_LABEL}")
     st.write("ここでは、公開前に気になる点を確認できます。")
     st.write("どこを見直すと安心かを、下に分かりやすく表示します。")
 

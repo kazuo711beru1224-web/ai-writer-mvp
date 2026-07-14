@@ -13,6 +13,7 @@ import streamlit.components.v1 as components
 
 from modules.guardrails_core import evaluate_guardrails
 from modules.diagnosis_templates import build_buyer_diagnosis
+from modules.quality_ui import KEYS as _QUALITY_KEYS, QUALITY_MENU_LABEL
 from openai_runtime import generate_markdown, OpenAIRuntimeError
 
 
@@ -212,8 +213,8 @@ ARTICLE_PAGE_KEYWORD = 2     # 検索キーワード・詳細設定入口
 ARTICLE_PAGE_OFFICIAL = 3    # 公式情報・確認先
 ARTICLE_PAGE_STYLE = 4       # 書き方の希望
 ARTICLE_PAGE_DRAFT = 5       # 下書き作成
-ARTICLE_PAGE_PRECHECK = 6    # 公開前確認
-ARTICLE_PAGE_POSTEDIT = 7    # 編集後確認・保存
+ARTICLE_PAGE_PRECHECK = 6    # 下書きの確認
+ARTICLE_PAGE_POSTEDIT = 7    # 文章チェックへ進む
 ARTICLE_PAGE_COUNT = 7
 ARTICLE_PAGE_LABELS: Dict[int, str] = {
     ARTICLE_PAGE_BASIC: "基本入力",
@@ -221,8 +222,8 @@ ARTICLE_PAGE_LABELS: Dict[int, str] = {
     ARTICLE_PAGE_OFFICIAL: "公式情報",
     ARTICLE_PAGE_STYLE: "書き方",
     ARTICLE_PAGE_DRAFT: "下書き作成",
-    ARTICLE_PAGE_PRECHECK: "公開前確認",
-    ARTICLE_PAGE_POSTEDIT: "編集後確認・保存",
+    ARTICLE_PAGE_PRECHECK: "下書きの確認",
+    ARTICLE_PAGE_POSTEDIT: "文章チェックへ進む",
 }
 
 # シャドウStateからの復元(_restore_shadow_state_to_blanks)を、実際に
@@ -2659,7 +2660,10 @@ def _render_page_2_keyword_and_detail_entry() -> None:
     st.markdown("## 🔍 検索キーワード・詳細設定")
 
     st.markdown("### 3. 検索キーワード（任意）")
-    st.caption("思いつく言葉があれば、2〜5個くらい入れてください。空でも進められます。")
+    st.caption(
+        "検索キーワード、サジェストキーワード、関連キーワードなど、"
+        "読者が検索しそうな言葉を入れてください。2〜5個くらいが目安です。空でも進められます。"
+    )
     st.text_input(
         "例：在職老齢年金, 支給停止, 65万円基準",
         key=KEYS["suggest"],
@@ -2706,9 +2710,9 @@ def _render_page_3_official_info() -> None:
             key=KEYS["evidence_url"],
         )
         st.caption(
-            "公式ページを見つけている場合はURLを貼ってください。分からなければ空欄で大丈夫です。"
-            "現在は、AIが自動で公式URLを取得する機能は未完成です。"
-            "分からない場合は、下の『書類名・検索語』に思いつく言葉だけ入れてください。"
+            "AIは公式URLを自動では取得しません。公式ページを見つけた場合は、ここに自分で貼ってください。"
+            "分からない場合は空欄で大丈夫です。確認先を探すための検索語やヒントは提案できるので、"
+            "下の『書類名・検索語』に思いつく言葉だけ入れてください。"
         )
 
         st.text_input(
@@ -2781,18 +2785,18 @@ def _render_page_4_writing_style() -> None:
 
         main_kw = str(st.session_state.get(KEYS["main_kw"], "") or "").strip()
         if not main_kw:
-            st.caption(f"メインキーワード候補：{_guess_main_kw_from_consult(str(st.session_state.get(KEYS['consult_situation'], '') or ''), str(st.session_state.get(KEYS['consult_question'], '') or ''))}")
-        st.text_input("メインキーワード", key=KEYS["main_kw"])
+            st.caption(f"候補：{_guess_main_kw_from_consult(str(st.session_state.get(KEYS['consult_situation'], '') or ''), str(st.session_state.get(KEYS['consult_question'], '') or ''))}")
+        st.text_input("この記事で中心にする言葉", key=KEYS["main_kw"])
 
         sub_kw = str(st.session_state.get(KEYS["sub_kw"], "") or "").strip()
         if not sub_kw:
-            st.caption("サブキーワード候補：検索キーワードの内容や相談文から自動で考えます。必要なら入れてください。")
-        st.text_input("サブキーワード", key=KEYS["sub_kw"])
+            st.caption("候補：検索キーワードの内容や相談文から自動で考えます。必要なら入れてください。")
+        st.text_input("一緒に入れたい関連語", key=KEYS["sub_kw"])
 
         theme = str(st.session_state.get(KEYS["theme"], "") or "").strip()
         if not theme:
-            st.caption(f"記事テーマ候補：{_guess_theme_from_consult(str(st.session_state.get(KEYS['consult_situation'], '') or ''), str(st.session_state.get(KEYS['consult_question'], '') or ''))}")
-        st.text_input("記事テーマ", key=KEYS["theme"])
+            st.caption(f"候補：{_guess_theme_from_consult(str(st.session_state.get(KEYS['consult_situation'], '') or ''), str(st.session_state.get(KEYS['consult_question'], '') or ''))}")
+        st.text_input("記事の仮タイトル・方向性", key=KEYS["theme"])
 
 
 def _render_pre_generate_input_summary() -> None:
@@ -2924,7 +2928,7 @@ def render_article_ui(
     elif active_page == ARTICLE_PAGE_PRECHECK:
         _render_page_6_precheck()
     else:
-        _render_page_7_postedit_save(outputs_dir=outputs_dir)
+        _render_page_7_postedit_save()
 
     st.divider()
     _render_page_nav_buttons(position="bottom")
@@ -3190,8 +3194,46 @@ def _render_page_5_draft(
                     )
 
 
+def _send_last_text_to_check_mode() -> None:
+    """
+    記事モードのAI下書き(last_text)を、文章チェックモードの入力欄へ渡す。
+    手直しと最終確認は文章チェックモード側で行う設計のため、記事モードでは
+    本文を書き換えず、そのまま渡すだけにする。
+    """
+    text = str(st.session_state.get(KEYS["last_text"], "") or "")
+    st.session_state[_QUALITY_KEYS["check_text_saved"]] = text
+    st.session_state[_QUALITY_KEYS["check_text_widget"]] = text
+    st.session_state["menu_request"] = QUALITY_MENU_LABEL
+
+
+def _render_draft_readonly_and_handoff(*, key_suffix: str) -> None:
+    """
+    6/7・7/7で共通の「AI下書きを読み取り専用で表示し、文章チェックへ渡す」導線。
+    last_text（article__form_dataが正本）を表示するだけで、記事モード内では
+    本文を編集しない。
+    """
+    last_text = str(st.session_state.get(KEYS["last_text"], "") or "")
+
+    st.markdown("### 📄 AIが作った下書き（読み取り専用）")
+    st.caption("この本文はここでは直接編集できません。手直しと最終確認は『文章チェック』モードで行ってください。")
+    st.code(last_text, language="text")
+    _render_copy_button(text=last_text, label="この下書きをコピー")
+
+    st.divider()
+    st.markdown("### 📋 文章チェックへ進む")
+    st.caption("下の欄に貼り付けると、文章チェックモードの入力欄にそのまま反映されます。")
+    if st.button(
+        "📋 文章チェックへ貼り付ける",
+        key=f"btn_article_send_to_check_{key_suffix}",
+        use_container_width=True,
+    ):
+        _send_last_text_to_check_mode()
+        st.success("文章チェックモードへ貼り付けました。左メニューの『文章チェック』を開いてください。")
+        st.rerun()
+
+
 def _render_page_6_precheck() -> None:
-    st.markdown("## ✅ 公開前確認")
+    st.markdown("## ✅ 下書きの確認")
     last_text = str(st.session_state.get(KEYS["last_text"], "") or "")
 
     if _is_blank(last_text):
@@ -3214,92 +3256,19 @@ def _render_page_6_precheck() -> None:
     level = _render_guardrail_meter(body_text=last_text, evidence_text=guardrail_evidence)
 
     if level == "RISK":
-        st.warning("AIが作った下書きには確認したい点があります。下の本文欄で直してから、次のページでもう一度AI確認をすると安全です。")
+        st.warning("AIが作った下書きには確認したい点があります。文章チェックモードで直してから、もう一度確認すると安全です。")
 
-    st.markdown("### ✍ 公開前に自分で直す本文")
-    st.caption("この欄で文章を直せます。編集前の本文を残したい場合は、先にWordなどへコピーして保管してください。")
-    st.caption("直したあとは、次のページの『この文章をAIに確認してもらう』で、気になる箇所をもう一度確認できます。")
-
-    # article__form_data["copy_text"]を正本にする。widget keyは表示専用のため、
-    # Streamlitの仕様でページ移動により消えていても、ここでform_dataから
-    # 流し込み直すことで編集内容が消えない（既にwidget keyがあれば上書きしない）。
-    _seed_widget_from_form_data_if_missing("copy_text")
-
-    current_copy_text = _get_form_data_value("copy_text")
-    current_copy_sig = _get_form_data_value("copy_last_sig")
-    expected_sig = str(hash(last_text))
-
-    if _is_blank(current_copy_text):
-        # AI初稿からの初回コピーは、copy_textが空の場合だけ行う。
-        _set_copy_state_from_text(last_text)
-        current_copy_text = _get_form_data_value("copy_text")
-        current_copy_sig = _get_form_data_value("copy_last_sig")
-
-    if current_copy_sig == expected_sig:
-        st.info("AI初稿を編集用にコピーしています。必要なところだけ直してください。直さない場合は、このまま次へ進めます。")
-    else:
-        st.info("この欄の文章は、いまのAI下書きとは別に編集されています。続けて直して大丈夫です。")
-
-    st.text_area(
-        "公開前に自分で直す本文",
-        key=KEYS["copy_text"],
-        height=420,
-        on_change=_sync_form_data_field_from_widget,
-        args=("copy_text",),
-    )
-    _render_copy_button(
-        text=_get_form_data_value("copy_text"),
-        label="この本文をコピー",
-    )
+    _render_draft_readonly_and_handoff(key_suffix="page6")
 
 
-def _render_page_7_postedit_save(*, outputs_dir: str) -> None:
-    st.markdown("## 💾 編集後確認・保存")
+def _render_page_7_postedit_save() -> None:
+    st.markdown("## 📋 文章チェックへ進む")
     last_text = str(st.session_state.get(KEYS["last_text"], "") or "")
 
     if _is_blank(last_text):
         st.info("※まだ下書きは作られていません。『下書き作成』ページで『下書きを作る』を押してください。")
         return
 
-    guardrail_evidence, _used_fallback = _effective_guardrail_evidence()
-    # article__form_data["copy_text"]が正本。widget keyはページ6でしか
-    # 描画されないため、直接session_stateを読まずform_data経由で読む。
-    copy_text = _get_form_data_value("copy_text")
+    st.caption("記事モードでは本文の保存はしません。手直し・最終確認・保存は『文章チェック』モードで行ってください。")
 
-    st.markdown("### 保存する本文")
-    if _is_blank(copy_text):
-        st.info("まだ自分では直していません。『公開前確認』ページの編集欄で直してから戻ってください。")
-    else:
-        st.code(copy_text, language="text")
-
-    action_col1, action_col2 = st.columns([1, 1])
-    with action_col1:
-        check_edited = st.button(
-            "この文章をAIに確認してもらう",
-            key="btn_article_check_edited_text",
-            use_container_width=True,
-        )
-    with action_col2:
-        if st.button("💾 この文章を保存する", key="btn_article_save_file", use_container_width=True):
-            save_target = copy_text.strip() or last_text
-            ok, message = _save_article_file(outputs_dir=outputs_dir, body_text=save_target)
-            if ok:
-                st.success(message)
-            else:
-                st.error(message)
-
-    if check_edited:
-        edited_text = copy_text.strip()
-        if _is_blank(edited_text):
-            st.warning("確認する文章が空です。『公開前確認』ページの本文欄に文章を入れてください。")
-        else:
-            edited_level = _render_edited_text_check_result(edited_text=edited_text, evidence_text=guardrail_evidence)
-            if _is_latest_news_topic() and ("打撃" in edited_text or "打率" in edited_text or "出塁率" in edited_text or "安打" in edited_text):
-                proof_ev_lower = str(guardrail_evidence or "")
-                if ("打数" not in proof_ev_lower and "安打" not in proof_ev_lower and "打率" not in proof_ev_lower and "出塁率" not in proof_ev_lower):
-                    st.warning(
-                        "打撃まで書きたいときは、打数・安打・打率などが確認できる別の試合速報や成績ページを追加してください。"
-                        "追加できない場合は、『この資料では打撃成績までは確認できません』と控えめに書くのが安全です。"
-                    )
-            if edited_level == "SAFE":
-                st.success("編集した文章は、大きな問題が見つかりにくい状態です。公開前に最終確認して保存できます。")
+    _render_draft_readonly_and_handoff(key_suffix="page7")
