@@ -136,3 +136,23 @@ def test_autosave_noop_when_article_fields_all_blank(tmp_path):
 
     fp = tmp_path / app.AUTOSAVE_FILENAME
     assert not fp.exists()
+
+
+def test_restore_apply_keys_include_plan_and_proof_snapshots():
+    # 「前回の入力を復元する」で下書き設計図・確認先snapshotが不自然に
+    # 欠けないよう、RESTORE_APPLY_KEYSに追加されたことを確認する。
+    for key in (
+        "article__plan_result",
+        "article__proof_evidence",
+        "article__proof_evidence_compact",
+        "article__proof_suggest",
+        "article__proof_memo",
+    ):
+        assert key in app.RESTORE_APPLY_KEYS
+
+
+def test_restore_apply_keys_never_include_api_key_or_copy_text():
+    # APIキーは事故防止のため絶対に復元対象へ含めない。
+    # copy_text（公開前に自分で直す本文）は今回の対象外のため含めない。
+    assert "openai_api_key" not in app.RESTORE_APPLY_KEYS
+    assert "article__copy_text" not in app.RESTORE_APPLY_KEYS

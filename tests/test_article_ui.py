@@ -517,3 +517,191 @@ def test_render_page_5_draft_does_not_call_scroll_tracker_or_restore():
 
     assert "_render_article_scroll_tracker()" not in active_source
     assert "_render_article_scroll_restore(" not in active_source
+
+
+# =========================
+# 非表示ページのwidget keyがStreamlitの仕様で消えた場合の安定化
+# =========================
+
+def test_memo_is_included_in_shadow_keys():
+    # 読者や書き方のメモ(article__memo)は、他の入力欄よりシャドウStateの
+    # 保護を受けておらず消えやすい状態だったため、追加されたことを確認する。
+    assert KEYS["memo"] in article_ui.SHADOW_KEYS
+    assert article_ui.SHADOW_KEYS[KEYS["memo"]] == "article_shadow__memo"
+
+
+def test_clear_shadow_state_clears_memo_shadow_too():
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    st.session_state["article_shadow__memo"] = "前のメモ"
+
+    article_ui._clear_shadow_state()
+
+    assert st.session_state["article_shadow__memo"] == ""
+
+
+def test_backup_article_inputs_does_not_overwrite_with_blank():
+    # _backup_shadow_state()と同じ考え方で、現在値が空文字のときは
+    # 既存のarticle__input_backupを空で潰さないことを確認する。
+    _reset_session_state()
+    st.session_state[KEYS["consult_situation"]] = "テスト用の状況"
+
+    article_ui._backup_article_inputs()
+    assert st.session_state["article__input_backup"][KEYS["consult_situation"]] == "テスト用の状況"
+
+    # 何らかの理由（非表示ページのwidget keyが消えた等）で現在値が空になった。
+    st.session_state[KEYS["consult_situation"]] = ""
+    article_ui._backup_article_inputs()
+
+    # 既存のバックアップ値は空で潰されず、そのまま残る。
+    assert st.session_state["article__input_backup"][KEYS["consult_situation"]] == "テスト用の状況"
+
+
+def test_clear_form_only_still_empties_input_backup_after_guard_added():
+    # 空文字上書き防止ガードを追加しても、明示クリア操作では
+    # article__input_backupが確実に空になることの回帰確認
+    # （test_clear_form_only_clears_shadow_state_and_input_backupと重複する
+    # 観点だが、_backup_article_inputs()側の変更を直接対象にするため個別に置く）。
+    _reset_session_state()
+    st.session_state[KEYS["consult_situation"]] = "テスト用の状況"
+    article_ui._backup_article_inputs()
+    assert st.session_state["article__input_backup"] != {}
+
+    article_ui._clear_form_only()
+
+    assert st.session_state["article__input_backup"] == {}
+
+
+def test_get_current_consult_values_is_read_only_and_uses_backup_fallback():
+    # Streamlitの仕様で、非表示ページのwidget keyがsession_stateから
+    # 削除された状態を人工的に再現する（del）。
+    _reset_session_state()
+    st.session_state[KEYS["consult_situation"]] = "テスト用の状況"
+    st.session_state[KEYS["consult_question"]] = "テスト用の質問"
+    article_ui._backup_article_inputs()
+
+    del st.session_state[KEYS["consult_situation"]]
+    del st.session_state[KEYS["consult_question"]]
+
+    situation, question = article_ui._get_current_consult_values()
+    assert situation == "テスト用の状況"
+    assert question == "テスト用の質問"
+
+    # 読む専用ヘルパーのため、呼んだだけではsession_stateへ書き戻さない。
+    assert KEYS["consult_situation"] not in st.session_state
+    assert KEYS["consult_question"] not in st.session_state
+
+
+def test_get_current_consult_values_uses_shadow_when_backup_is_empty():
+    _reset_session_state()
+    st.session_state[KEYS["consult_situation"]] = ""
+    st.session_state[KEYS["consult_question"]] = ""
+    st.session_state["article_shadow__consult_situation"] = "シャドウの状況"
+    st.session_state["article_shadow__consult_question"] = "シャドウの質問"
+
+    situation, question = article_ui._get_current_consult_values()
+    assert situation == "シャドウの状況"
+    assert question == "シャドウの質問"
+
+
+def test_get_current_consult_values_returns_blank_after_explicit_clear():
+    # 「入力欄を空にする」で明示的に空にした直後は、backup/shadowも
+    # 一緒に消えているため、読む専用ヘルパーでも古い値が復活しないこと。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    st.session_state[KEYS["consult_situation"]] = "テスト用の状況"
+    st.session_state[KEYS["consult_question"]] = "テスト用の質問"
+    render_article_ui(**_common_kwargs())
+
+    article_ui._clear_form_only()
+
+    situation, question = article_ui._get_current_consult_values()
+    assert situation == ""
+    assert question == ""
+
+
+def test_restore_blank_generation_inputs_from_backup_or_shadow_restores_widget_keys():
+    # 下書き作成直前の書き戻しは、consult_situation/consult_question以外に
+    # suggest/evidence_url/evidence_title/tone_regも対象にすることを確認する。
+    _reset_session_state()
+    st.session_state[KEYS["consult_situation"]] = "テスト用の状況"
+    st.session_state[KEYS["consult_question"]] = "テスト用の質問"
+    st.session_state[KEYS["suggest"]] = "keyword A"
+    st.session_state[KEYS["evidence_url"]] = "https://example.com"
+    st.session_state[KEYS["evidence_title"]] = "資料名"
+    st.session_state[KEYS["tone_reg"]] = "です・ます調"
+    article_ui._backup_article_inputs()
+    article_ui._backup_shadow_state()
+
+    for key in (
+        KEYS["consult_situation"],
+        KEYS["consult_question"],
+        KEYS["suggest"],
+        KEYS["evidence_url"],
+        KEYS["evidence_title"],
+        KEYS["tone_reg"],
+    ):
+        del st.session_state[key]
+
+    article_ui._restore_blank_generation_inputs_from_backup_or_shadow()
+
+    assert st.session_state[KEYS["consult_situation"]] == "テスト用の状況"
+    assert st.session_state[KEYS["consult_question"]] == "テスト用の質問"
+    assert st.session_state[KEYS["suggest"]] == "keyword A"
+    assert st.session_state[KEYS["evidence_url"]] == "https://example.com"
+    assert st.session_state[KEYS["evidence_title"]] == "資料名"
+    assert st.session_state[KEYS["tone_reg"]] == "です・ます調"
+
+
+def test_restore_blank_generation_inputs_does_not_revive_after_explicit_clear():
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    st.session_state[KEYS["consult_situation"]] = "テスト用の状況"
+    st.session_state[KEYS["consult_question"]] = "テスト用の質問"
+    render_article_ui(**_common_kwargs())
+
+    article_ui._clear_form_only()
+    article_ui._restore_blank_generation_inputs_from_backup_or_shadow()
+
+    assert st.session_state[KEYS["consult_situation"]] == ""
+    assert st.session_state[KEYS["consult_question"]] == ""
+
+
+def test_restore_blank_generation_inputs_does_not_overwrite_existing_non_blank_value():
+    # 現在値が既に非空なら、backup/shadowの値で上書きしないこと。
+    _reset_session_state()
+    st.session_state[KEYS["consult_situation"]] = "古い状況"
+    article_ui._backup_article_inputs()
+
+    st.session_state[KEYS["consult_situation"]] = "新しい状況"
+    article_ui._restore_blank_generation_inputs_from_backup_or_shadow()
+
+    assert st.session_state[KEYS["consult_situation"]] == "新しい状況"
+
+
+def test_generate_draft_uses_backup_when_widget_keys_were_pruned(monkeypatch):
+    # 5/7ページの「入力あり」表示と、「下書きを作る」ボタンの判定が
+    # 同じヘルパーを使うことで、非表示ページのwidget keyがStreamlitの仕様で
+    # 消えていても、backupに値があれば「空にしてください」警告が出ず、
+    # 実際に下書きが生成されることを確認する（回帰の中心シナリオ）。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_DRAFT
+    st.session_state[KEYS["consult_situation"]] = "テスト用の状況"
+    st.session_state[KEYS["consult_question"]] = "テスト用の質問"
+
+    # ページ1のwidgetが退避しておいた状態を再現する。
+    article_ui._backup_article_inputs()
+    article_ui._backup_shadow_state()
+
+    # Streamlitの仕様で、ページ1のwidget keyが削除された状態を人工的に再現する。
+    del st.session_state[KEYS["consult_situation"]]
+    del st.session_state[KEYS["consult_question"]]
+
+    warnings = []
+    monkeypatch.setattr(st, "warning", lambda text: warnings.append(text))
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: label == "✨ 下書きを作る")
+
+    render_article_ui(**_common_kwargs())
+
+    assert "『今の状況』と『知りたいこと』を入れてください。" not in warnings
+    assert str(st.session_state.get(KEYS["last_text"], "")).strip() != ""

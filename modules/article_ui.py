@@ -94,6 +94,7 @@ SHADOW_KEYS: Dict[str, str] = {
     KEYS["main_kw"]: "article_shadow__main_kw",
     KEYS["sub_kw"]: "article_shadow__sub_kw",
     KEYS["theme"]: "article_shadow__theme",
+    KEYS["memo"]: "article_shadow__memo",
 }
 
 ARTICLE_AUTOSAVE_FILENAME = "autosave_state.json"
@@ -619,22 +620,40 @@ def _ensure_article_input_backup() -> None:
         st.session_state["article__input_backup"] = {}
 
 
+_ARTICLE_INPUT_BACKUP_KEYS: Tuple[str, ...] = (
+    KEYS["main_kw"],
+    KEYS["sub_kw"],
+    KEYS["theme"],
+    KEYS["memo"],
+    KEYS["consult_situation"],
+    KEYS["consult_question"],
+    KEYS["evidence_url"],
+    KEYS["evidence_title"],
+    KEYS["evidence_facts"],
+    KEYS["evidence_points"],
+    KEYS["evidence"],
+    KEYS["suggest"],
+    KEYS["tone_reg"],
+)
+
+
 def _backup_article_inputs() -> None:
-    st.session_state["article__input_backup"] = {
-        KEYS["main_kw"]: str(st.session_state.get(KEYS["main_kw"], "")),
-        KEYS["sub_kw"]: str(st.session_state.get(KEYS["sub_kw"], "")),
-        KEYS["theme"]: str(st.session_state.get(KEYS["theme"], "")),
-        KEYS["memo"]: str(st.session_state.get(KEYS["memo"], "")),
-        KEYS["consult_situation"]: str(st.session_state.get(KEYS["consult_situation"], "")),
-        KEYS["consult_question"]: str(st.session_state.get(KEYS["consult_question"], "")),
-        KEYS["evidence_url"]: str(st.session_state.get(KEYS["evidence_url"], "")),
-        KEYS["evidence_title"]: str(st.session_state.get(KEYS["evidence_title"], "")),
-        KEYS["evidence_facts"]: str(st.session_state.get(KEYS["evidence_facts"], "")),
-        KEYS["evidence_points"]: str(st.session_state.get(KEYS["evidence_points"], "")),
-        KEYS["evidence"]: str(st.session_state.get(KEYS["evidence"], "")),
-        KEYS["suggest"]: str(st.session_state.get(KEYS["suggest"], "")),
-        KEYS["tone_reg"]: str(st.session_state.get(KEYS["tone_reg"], "")),
-    }
+    """
+    主要な入力欄の現在値をarticle__input_backupへ退避する。
+    _backup_shadow_state()と同じく、現在値が空文字・Noneの場合は
+    既存のバックアップ値を上書きしない（非表示ページのwidget keyが
+    Streamlitの仕様で空扱いになった直後の再描画で、既存バックアップまで
+    空で潰してしまう事故を防ぐため）。
+    """
+    existing = st.session_state.get("article__input_backup")
+    backup = dict(existing) if isinstance(existing, dict) else {}
+
+    for key in _ARTICLE_INPUT_BACKUP_KEYS:
+        current = st.session_state.get(key, "")
+        if not _is_blank(current):
+            backup[key] = str(current)
+
+    st.session_state["article__input_backup"] = backup
 
 
 def _restore_article_inputs_from_backup() -> None:
@@ -686,6 +705,78 @@ def _clear_shadow_state() -> None:
     """シャドウStateを空にする（入力欄クリア系の操作と一緒に呼ぶ）。"""
     for shadow_key in SHADOW_KEYS.values():
         st.session_state[shadow_key] = ""
+
+
+def _get_effective_value(key: str) -> str:
+    """
+    読む専用ヘルパー。widgetの現在値が空でも、article__input_backupや
+    シャドウStateにある直近の非空値を安全に参照する。
+    session_stateへの書き戻しは一切行わない（呼ぶだけでは何も変化しない）。
+    利用者が明示的に入力欄を空にした直後は、backup/shadow側も
+    _clear_form_only() / _clear_generated_only() で既に空になっているため、
+    ここで古い値が「復活して見える」ことはない。
+    """
+    current = st.session_state.get(key, "")
+    if not _is_blank(current):
+        return str(current).strip()
+
+    backup = st.session_state.get("article__input_backup")
+    if isinstance(backup, dict):
+        backup_value = backup.get(key, "")
+        if not _is_blank(backup_value):
+            return str(backup_value).strip()
+
+    shadow_key = SHADOW_KEYS.get(key)
+    if shadow_key:
+        shadow_value = st.session_state.get(shadow_key, "")
+        if not _is_blank(shadow_value):
+            return str(shadow_value).strip()
+
+    return ""
+
+
+def _get_current_consult_values() -> Tuple[str, str]:
+    """
+    「今の状況」「知りたいこと」の実質的な現在値を返す読む専用ヘルパー。
+    5/7ページの「入力あり」表示と、「下書きを作る」ボタンの入力不足判定は、
+    表示と判定がずれないよう、必ずこの関数だけを見て一致させる。
+    """
+    return (
+        _get_effective_value(KEYS["consult_situation"]),
+        _get_effective_value(KEYS["consult_question"]),
+    )
+
+
+# 下書き作成の直前だけ、widget値が空でbackup/shadowに非空値がある場合に
+# 限って書き戻す対象のキー（_restore_blank_generation_inputs_from_backup_or_shadow参照）。
+_GENERATION_RESTORE_KEYS: Tuple[str, ...] = (
+    KEYS["consult_situation"],
+    KEYS["consult_question"],
+    KEYS["suggest"],
+    KEYS["evidence_url"],
+    KEYS["evidence_title"],
+    KEYS["tone_reg"],
+)
+
+
+def _restore_blank_generation_inputs_from_backup_or_shadow() -> None:
+    """
+    「✨ 下書きを作る」ボタンが押された直後にだけ呼ぶ、書き戻しありの安全復元。
+    下書き生成本体（_build_planning_prompt / _build_writing_prompt）はここで
+    列挙したキーをsession_stateから直接読むため、表示・判定用の
+    _get_effective_value()だけでは実際の生成内容に反映されない。
+    そのため、現在値が空で、backupまたはシャドウStateに非空値がある場合だけ、
+    ここで一度だけsession_stateへ書き戻す。
+    利用者が「入力欄を空にする」などで明示的に空にした直後は、backup/shadowも
+    既に空になっているため、ここで古い値が復活することはない。
+    """
+    for key in _GENERATION_RESTORE_KEYS:
+        current = st.session_state.get(key, "")
+        if not _is_blank(current):
+            continue
+        value = _get_effective_value(key)
+        if not _is_blank(value):
+            st.session_state[key] = value
 
 
 def _restore_stale_inputs_on_page_change() -> None:
@@ -2574,8 +2665,7 @@ def _render_page_4_writing_style() -> None:
 def _render_pre_generate_input_summary() -> None:
     st.markdown("### 入力内容の簡単な確認")
 
-    situation = str(st.session_state.get(KEYS["consult_situation"], "") or "").strip()
-    question = str(st.session_state.get(KEYS["consult_question"], "") or "").strip()
+    situation, question = _get_current_consult_values()
     suggest = str(st.session_state.get(KEYS["suggest"], "") or "").strip()
     evidence_text = _get_effective_input_evidence_text().strip()
     tone_reg = str(st.session_state.get(KEYS["tone_reg"], "") or "").strip()
@@ -2724,8 +2814,12 @@ def _render_page_5_draft(
     st.caption("確認先を入力した場合は、先に『公式情報・確認先』ページで反映ボタンを押してください。")
 
     if st.button("✨ 下書きを作る", use_container_width=True, key="btn_article_generate"):
-        situation = str(st.session_state.get(KEYS["consult_situation"], "") or "").strip()
-        question = str(st.session_state.get(KEYS["consult_question"], "") or "").strip()
+        # 非表示ページのwidget keyがStreamlitの仕様で空扱いになっていた場合に
+        # 備え、下書き生成本体が直接読むキーだけを対象に、backup/shadowの
+        # 非空値で安全に埋め直してから判定・生成に入る（明示クリア直後は
+        # backup/shadowも空のため、ここで古い値が復活することはない）。
+        _restore_blank_generation_inputs_from_backup_or_shadow()
+        situation, question = _get_current_consult_values()
 
         if not situation or not question:
             st.warning("『今の状況』と『知りたいこと』を入れてください。")

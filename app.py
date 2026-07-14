@@ -149,6 +149,14 @@ RESTORE_APPLY_KEYS = [
     "article__evidence_facts",
     "article__evidence_points",
     "article__tone_regulation",
+    # 「前回の入力を復元する」で、下書き設計図・確認先のsnapshotが
+    # 不自然に欠けないようにするための追加分。APIキーとcopy_textは
+    # 今回の対象外（APIキーは事故防止のため絶対に含めない）。
+    "article__plan_result",
+    "article__proof_evidence",
+    "article__proof_evidence_compact",
+    "article__proof_suggest",
+    "article__proof_memo",
 ]
 
 SNAPSHOT_FALLBACK_MAP = {
