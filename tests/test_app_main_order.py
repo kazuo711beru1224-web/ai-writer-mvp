@@ -72,3 +72,28 @@ def test_article_mode_sidebar_navigation_uses_buttons_with_active_page():
         "ARTICLE_PAGE_PRECHECK",
     ):
         assert target_page in source
+
+
+def test_quality_mode_sidebar_navigation_has_no_url_hash_links():
+    # 文章チェックモードの画面移動サポートも、記事モードと同じ理由で
+    # href="#quality-..."によるアンカー移動を使わない設計にする。
+    source = inspect.getsource(app._render_sidebar)
+
+    assert 'href="#quality' not in source
+
+
+def test_quality_mode_sidebar_navigation_uses_buttons_with_active_page():
+    # st.button押下で_go_to_quality_page()を呼ぶ構造になっていることを
+    # 確認する（scrollIntoViewや直接のactive_page書き換えは使わない）。
+    source = inspect.getsource(app._render_sidebar)
+
+    assert "st.button(" in source
+    assert "_go_to_quality_page(" in source
+    assert "QUALITY_ACTIVE_PAGE_KEY] = target_page" not in source
+
+    for target_page in (
+        "QUALITY_PAGE_INPUT",
+        "QUALITY_PAGE_RESULT",
+        "QUALITY_PAGE_FIX_SAVE",
+    ):
+        assert target_page in source

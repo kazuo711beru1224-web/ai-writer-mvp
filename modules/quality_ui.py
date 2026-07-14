@@ -21,6 +21,25 @@ QUALITY_MENU_LABEL = "文章チェック（手動入力）"
 
 
 # =========================
+# 文章チェックモードのページ区切り型UI
+# =========================
+# 記事モードでURL hash・自動スクロール制御が本番Streamlit Cloudで不安定要因に
+# なった教訓を踏まえ、文章チェックモードは最初からhref="#..."アンカーに
+# 頼らない設計にする。ページ移動はst.button + session_stateのみで行い、
+# URL hash・自動での画面ジャンプ・自動スクロールtracker/restoreは一切使わない。
+QUALITY_ACTIVE_PAGE_KEY = "quality__active_page"
+QUALITY_PAGE_INPUT = 1       # 文章を入れる
+QUALITY_PAGE_RESULT = 2      # 確認結果を見る
+QUALITY_PAGE_FIX_SAVE = 3    # 直す・保存する
+QUALITY_PAGE_COUNT = 3
+QUALITY_PAGE_LABELS: Dict[int, str] = {
+    QUALITY_PAGE_INPUT: "文章を入れる",
+    QUALITY_PAGE_RESULT: "確認結果を見る",
+    QUALITY_PAGE_FIX_SAVE: "直す・保存する",
+}
+
+
+# =========================
 # ベル憲法：状態キー固定
 # =========================
 KEYS: Dict[str, str] = {
@@ -181,6 +200,79 @@ def _ensure_state() -> None:
     for k in must_init:
         if k not in st.session_state:
             st.session_state[k] = ""
+
+
+def _ensure_quality_active_page_initialized() -> None:
+    if QUALITY_ACTIVE_PAGE_KEY not in st.session_state:
+        st.session_state[QUALITY_ACTIVE_PAGE_KEY] = QUALITY_PAGE_INPUT
+
+
+def _go_to_quality_page(page: int) -> None:
+    st.session_state[QUALITY_ACTIVE_PAGE_KEY] = page
+
+
+def _render_quality_page_indicator() -> None:
+    page = st.session_state.get(QUALITY_ACTIVE_PAGE_KEY, QUALITY_PAGE_INPUT)
+    label = QUALITY_PAGE_LABELS.get(page, "")
+    st.caption(f"📍 {page}/{QUALITY_PAGE_COUNT} {label}")
+
+
+def _render_quality_page_nav_buttons(*, position: str) -> None:
+    page = st.session_state.get(QUALITY_ACTIVE_PAGE_KEY, QUALITY_PAGE_INPUT)
+
+    if page <= QUALITY_PAGE_INPUT:
+        st.button(
+            "次へ →",
+            key=f"btn_quality_page_next_{position}",
+            use_container_width=True,
+            on_click=_go_to_quality_page,
+            args=(page + 1,),
+        )
+    elif page >= QUALITY_PAGE_COUNT:
+        st.button(
+            "← 戻る",
+            key=f"btn_quality_page_back_{position}",
+            use_container_width=True,
+            on_click=_go_to_quality_page,
+            args=(page - 1,),
+        )
+    else:
+        nav_col1, nav_col2 = st.columns([1, 1])
+        with nav_col1:
+            st.button(
+                "← 戻る",
+                key=f"btn_quality_page_back_{position}",
+                use_container_width=True,
+                on_click=_go_to_quality_page,
+                args=(page - 1,),
+            )
+        with nav_col2:
+            st.button(
+                "次へ →",
+                key=f"btn_quality_page_next_{position}",
+                use_container_width=True,
+                on_click=_go_to_quality_page,
+                args=(page + 1,),
+            )
+
+
+def _resolve_check_guide_texts() -> tuple[str, str, str]:
+    """
+    「確認の道しるべ」（根拠メモ・関連語・書き方メモ）を、記事モード由来の値も
+    含めて解決する。1/3（表示）と2/3（診断実行）の両方から呼ばれる。
+    """
+    evidence = str(st.session_state.get(KEYS["check_evidence"], "") or "")
+    suggest = str(st.session_state.get(KEYS["check_suggest"], "") or "")
+    memo = str(st.session_state.get(KEYS["check_memo"], "") or "")
+
+    if not evidence.strip():
+        evidence = _resolve_article_evidence()
+    if not suggest.strip():
+        suggest = _resolve_article_suggest()
+    if not memo.strip():
+        memo = _resolve_article_memo()
+
+    return evidence, suggest, memo
 
 
 def _sync_widget_to_saved(widget_key: str, saved_key: str) -> None:
@@ -814,8 +906,6 @@ def _render_badge(title: str, level: str) -> None:
         "CAUTION": "⚠️ CAUTION",
         "RISK": "🛑 RISK",
     }
-    if title == "\u8868\u8a18\u30fb\u8a00\u3044\u56de\u3057\u306e\u78ba\u8a8d":
-        st.markdown('<div id="quality-wording" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown(f"### {title}")
     st.write(badge_map.get(level or "", "（未診断）"))
 
@@ -855,7 +945,6 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
         if code == "便利表現チェック":
             body = str(st.session_state.get(KEYS["check_text_saved"], "") or "")
             if body and matched_texts:
-                st.markdown('<div id="quality-fix-place" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
                 st.markdown("#### \u76f4\u3059\u5834\u6240\u304c\u308f\u304b\u308b\u672c\u6587")
                 safe_body = _escape_and_mark(
                     body,
@@ -997,23 +1086,8 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
                 st.write(rewrite_example)
 
 
-def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
-    """
-    文章チェック（手動入力）
-    - logs_dir を受ける（app.py署名ズレ耐性）
-    - **kwargs で将来拡張に耐える
-    - ウィジェットに value などの初期値パラメータを渡さない（憲法準拠）
-    """
-    _ = logs_dir
-    _ = kwargs
-    _ensure_state()
-
-    st.markdown('<div id="quality-top" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
-    st.markdown(f"## {QUALITY_MENU_LABEL}")
-    st.write("ここでは、公開前に気になる点を確認できます。")
-    st.write("どこを見直すと安心かを、下に分かりやすく表示します。")
-
-    st.divider()
+def _render_quality_page_1_input() -> None:
+    st.markdown("### 1. 文章を入れる")
 
     c1, c2 = st.columns([1, 1])
     with c1:
@@ -1040,7 +1114,6 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
 
     st.divider()
 
-    st.markdown('<div id="quality-text" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("### 確認したい文章")
     st.caption("公開前に見直したい本文をここへ入れてください。")
     st.caption("例：記事モードで作った下書き / 外部で整えた本文 / 公開前の最終稿")
@@ -1061,23 +1134,12 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
 
     st.divider()
 
-    st.markdown('<div id="quality-guide" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("### 🔎 確認の道しるべ")
     st.write("ここでは、記事モードで入れた根拠メモや関連語を確認できます。")
     st.write("本文にない数字、言い過ぎ、根拠のない断定がないかを見直してください。")
 
-    evidence = str(st.session_state.get(KEYS["check_evidence"], "") or "")
-    suggest = str(st.session_state.get(KEYS["check_suggest"], "") or "")
-    memo = str(st.session_state.get(KEYS["check_memo"], "") or "")
+    evidence, suggest, memo = _resolve_check_guide_texts()
 
-    if not evidence.strip():
-        evidence = _resolve_article_evidence()
-    if not suggest.strip():
-        suggest = _resolve_article_suggest()
-    if not memo.strip():
-        memo = _resolve_article_memo()
-
-    st.markdown('<div id="quality-evidence" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
     st.markdown("**根拠メモ（参考URL / 資料名 / 大事な数字）**")
     if evidence.strip():
         st.write(evidence)
@@ -1097,6 +1159,18 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
         st.write("未入力です。書き方のルールがある場合は、記事モードで入力してください。")
 
     st.divider()
+    st.info("入力できたら『次へ →』を押して、確認結果を見てください。")
+
+
+def _render_quality_page_2_result() -> None:
+    st.markdown("### 2. 確認結果を見る")
+
+    body_saved = str(st.session_state.get(KEYS["check_text_saved"], "") or "").strip()
+    if not body_saved:
+        st.info("※まだ確認したい文章が入っていません。『1. 文章を入れる』で貼り付けてください。")
+        return
+
+    evidence, suggest, memo = _resolve_check_guide_texts()
 
     st.write("準備ができたら、気になる点がないか確認します。")
     if st.button("公開前の確認をする", use_container_width=True, key=KEYS["btn_diagnose"]):
@@ -1200,3 +1274,63 @@ def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
 
         if style_items:
             _render_buyer_diagnosis_blocks(style_items)
+
+
+def _render_quality_page_3_fix_save() -> None:
+    st.markdown("### 3. 直す・保存する")
+
+    body = str(st.session_state.get(KEYS["check_text_saved"], "") or "").strip()
+    if not body:
+        st.info("※まだ確認したい文章が入っていません。『1. 文章を入れる』で貼り付けてください。")
+        return
+
+    st.caption(
+        "文章を直したい場合は『1. 文章を入れる』へ戻って書き換え、"
+        "『2. 確認結果を見る』でもう一度確認してください。"
+    )
+
+    st.markdown("#### 現在の本文（読み取り専用）")
+    st.code(body, language="text")
+    _render_copy_button(text=body, label="この本文をコピー")
+
+    st.divider()
+
+    st.markdown("#### 保存")
+    st.info(
+        "保存機能は準備中です。今はこの本文をコピーして、"
+        "お使いのファイルや共有ドキュメントに貼り付けて保存してください。"
+    )
+
+
+def render_quality_ui(logs_dir: Optional[str] = None, **kwargs: Any) -> None:
+    """
+    文章チェック（手動入力）
+    - logs_dir を受ける（app.py署名ズレ耐性）
+    - **kwargs で将来拡張に耐える
+    - ウィジェットに value などの初期値パラメータを渡さない（憲法準拠）
+    """
+    _ = logs_dir
+    _ = kwargs
+    _ensure_state()
+    _ensure_quality_active_page_initialized()
+
+    st.markdown(f"## {QUALITY_MENU_LABEL}")
+    st.write("ここでは、公開前に気になる点を確認できます。")
+    st.write("どこを見直すと安心かを、下に分かりやすく表示します。")
+
+    st.divider()
+
+    active_page = st.session_state.get(QUALITY_ACTIVE_PAGE_KEY, QUALITY_PAGE_INPUT)
+    _render_quality_page_indicator()
+    _render_quality_page_nav_buttons(position="top")
+    st.divider()
+
+    if active_page == QUALITY_PAGE_INPUT:
+        _render_quality_page_1_input()
+    elif active_page == QUALITY_PAGE_RESULT:
+        _render_quality_page_2_result()
+    else:
+        _render_quality_page_3_fix_save()
+
+    st.divider()
+    _render_quality_page_nav_buttons(position="bottom")

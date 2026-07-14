@@ -24,7 +24,14 @@ from modules.article_ui import (
     _go_to_page as _go_to_article_page,
 )
 from modules.home_ui import render_home_ui
-from modules.quality_ui import render_quality_ui, QUALITY_MENU_LABEL
+from modules.quality_ui import (
+    QUALITY_MENU_LABEL,
+    QUALITY_PAGE_INPUT,
+    QUALITY_PAGE_RESULT,
+    QUALITY_PAGE_FIX_SAVE,
+    render_quality_ui,
+    _go_to_quality_page,
+)
 from modules.official_procedure_ui import render_official_procedure_ui
 
 try:
@@ -889,13 +896,19 @@ def _render_sidebar() -> str:
 
         if current_menu == MENU_CHECK:
             st.divider()
-            st.markdown("### \U0001f9ed \u753b\u9762\u79fb\u52d5\u30b5\u30dd\u30fc\u30c8")
-            st.caption("\u6587\u7ae0\u30c1\u30a7\u30c3\u30af\u30e2\u30fc\u30c9\u5185\u306e\u898b\u305f\u3044\u5834\u6240\u3078\u79fb\u52d5\u3067\u304d\u307e\u3059\u3002")
-            st.markdown("- [\u3053\u306e\u753b\u9762\u306e\u5148\u982d\u3078](#quality-top)")
-            st.markdown("- [\u78ba\u8a8d\u3057\u305f\u3044\u6587\u7ae0\u3078](#quality-text)")
-            st.markdown("- [\u78ba\u8a8d\u306e\u9053\u3057\u308b\u3079\u3078](#quality-guide)")
-            st.markdown("- [\u8868\u8a18\u30fb\u8a00\u3044\u56de\u3057\u306e\u78ba\u8a8d\u3078](#quality-wording)")
-            st.markdown("- [\u76f4\u3059\u5834\u6240\u304c\u308f\u304b\u308b\u672c\u6587\u3078](#quality-fix-place)")
+            st.markdown("### 🧭 画面移動サポート")
+            st.caption("文章チェックモードは1～3のページに分かれています。")
+            for target_page, label in (
+                (QUALITY_PAGE_INPUT, "1. 文章を入れるへ"),
+                (QUALITY_PAGE_RESULT, "2. 確認結果を見るへ"),
+                (QUALITY_PAGE_FIX_SAVE, "3. 直す・保存するへ"),
+            ):
+                if st.button(
+                    label,
+                    key=f"quality_nav__page_{target_page}",
+                    use_container_width=True,
+                ):
+                    _go_to_quality_page(target_page)
 
     return str(st.session_state.get("app__menu") or MENU_HOME)
 
