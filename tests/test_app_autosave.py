@@ -156,3 +156,78 @@ def test_restore_apply_keys_never_include_api_key_or_copy_text():
     # copy_text（公開前に自分で直す本文）は今回の対象外のため含めない。
     assert "openai_api_key" not in app.RESTORE_APPLY_KEYS
     assert "article__copy_text" not in app.RESTORE_APPLY_KEYS
+
+
+def test_restore_apply_keys_does_not_include_form_data_as_flat_string():
+    # article__form_dataはdictのため、他のキーのように文字列化して
+    # RESTORE_APPLY_KEYSの汎用ループへ混ぜてはいけない
+    # （_apply_restore_payload内の専用マージ処理でのみ扱う）。
+    assert app.ARTICLE_FORM_DATA_KEY not in app.RESTORE_APPLY_KEYS
+
+
+def test_autosave_includes_form_data_dict(tmp_path):
+    # article__form_data（記事モード入力の正本）がautosave_state.jsonに
+    # dictのまま保存されることを確認する。
+    _reset_session_state()
+    _set_full_article_state(article__main_kw="遺族年金")
+    st.session_state[app.ARTICLE_FORM_DATA_KEY] = {
+        "consult_situation": "63歳会社員です。",
+        "copy_text": "利用者が手直しした本文です。",
+    }
+
+    app._autosave_state(tmp_path)
+
+    fp = tmp_path / app.AUTOSAVE_FILENAME
+    saved = json.loads(fp.read_text(encoding="utf-8"))
+    assert saved[app.ARTICLE_FORM_DATA_KEY] == {
+        "consult_situation": "63歳会社員です。",
+        "copy_text": "利用者が手直しした本文です。",
+    }
+
+
+def test_autosave_does_not_skip_when_only_form_data_has_content(tmp_path):
+    # 非表示ページのwidget key（WORK_SIG_KEYS）がStreamlitの仕様で全て
+    # 空になっていても、article__form_dataに実際の入力が残っていれば
+    # 「全欄が空」と誤判定して自動保存をスキップしないことを確認する。
+    _reset_session_state()
+    _set_full_article_state()  # WORK_SIG_KEYSの生キーは全て空
+    st.session_state[app.ARTICLE_FORM_DATA_KEY] = {
+        "consult_situation": "63歳会社員です。",
+    }
+
+    app._autosave_state(tmp_path)
+
+    fp = tmp_path / app.AUTOSAVE_FILENAME
+    assert fp.exists()
+
+
+def test_apply_restore_payload_merges_form_data_dict_without_stringifying():
+    _reset_session_state()
+    payload = {
+        app.ARTICLE_FORM_DATA_KEY: {
+            "consult_situation": "復元された状況",
+            "copy_text": "復元された手直し本文",
+        }
+    }
+
+    app._apply_restore_payload(payload)
+
+    restored = st.session_state[app.ARTICLE_FORM_DATA_KEY]
+    assert isinstance(restored, dict)
+    assert restored["consult_situation"] == "復元された状況"
+    assert restored["copy_text"] == "復元された手直し本文"
+
+
+def test_apply_restore_payload_never_puts_api_key_into_form_data():
+    _reset_session_state()
+    payload = {
+        app.ARTICLE_FORM_DATA_KEY: {
+            "consult_situation": "復元された状況",
+            "openai_api_key": "sk-should-not-be-restored",
+        }
+    }
+
+    app._apply_restore_payload(payload)
+
+    restored = st.session_state[app.ARTICLE_FORM_DATA_KEY]
+    assert "openai_api_key" not in restored

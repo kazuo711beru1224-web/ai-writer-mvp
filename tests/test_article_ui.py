@@ -16,6 +16,7 @@ from modules.article_ui import (
     ARTICLE_PAGE_BASIC,
     ARTICLE_PAGE_OFFICIAL,
     ARTICLE_PAGE_DRAFT,
+    ARTICLE_PAGE_PRECHECK,
     ARTICLE_PAGE_POSTEDIT,
     ARTICLE_SCROLL_STORAGE_KEY,
     ARTICLE_TOP_ANCHOR_ID,
@@ -705,3 +706,173 @@ def test_generate_draft_uses_backup_when_widget_keys_were_pruned(monkeypatch):
 
     assert "『今の状況』と『知りたいこと』を入れてください。" not in warnings
     assert str(st.session_state.get(KEYS["last_text"], "")).strip() != ""
+
+
+# =========================
+# article__form_data 単一ソース化（第1段階）
+# =========================
+
+def test_form_data_bootstraps_from_existing_widget_values_on_first_render():
+    # 旧方式（widget keyのみ）からの移行時、初回描画だけform_dataへ取り込む。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    st.session_state[KEYS["consult_situation"]] = "テスト用の状況"
+    st.session_state[KEYS["consult_question"]] = "テスト用の質問"
+
+    render_article_ui(**_common_kwargs())
+
+    assert article_ui._get_form_data_value("consult_situation") == "テスト用の状況"
+    assert article_ui._get_form_data_value("consult_question") == "テスト用の質問"
+
+
+def test_page1_inputs_are_readable_from_form_data_after_widget_key_pruned():
+    # 1/7でconsult_situation/consult_questionを入力→5/7へ進む→widget keyを
+    # delしても、form_dataから表示・判定できることを確認する（回帰の中心）。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    st.session_state[KEYS["consult_situation"]] = "テスト用の状況"
+    st.session_state[KEYS["consult_question"]] = "テスト用の質問"
+    render_article_ui(**_common_kwargs())
+
+    article_ui._go_to_page(ARTICLE_PAGE_DRAFT)
+
+    # Streamlitの仕様で、ページ1のwidget keyが削除された状態を人工的に再現する。
+    del st.session_state[KEYS["consult_situation"]]
+    del st.session_state[KEYS["consult_question"]]
+
+    situation, question = article_ui._get_current_consult_values()
+    assert situation == "テスト用の状況"
+    assert question == "テスト用の質問"
+
+
+def test_generate_draft_reads_form_data_directly_without_backup_or_shadow(monkeypatch):
+    # backup/shadowを一切経由せず、article__form_dataだけから
+    # 「今の状況」「知りたいこと」を読めることを確認する（単一ソース化の核心）。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_DRAFT
+    article_ui._set_form_data_value("consult_situation", "フォームデータの状況")
+    article_ui._set_form_data_value("consult_question", "フォームデータの質問")
+
+    warnings = []
+    monkeypatch.setattr(st, "warning", lambda text: warnings.append(text))
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: label == "✨ 下書きを作る")
+
+    render_article_ui(**_common_kwargs())
+
+    assert "『今の状況』と『知りたいこと』を入れてください。" not in warnings
+    assert str(st.session_state.get(KEYS["last_text"], "")).strip() != ""
+
+
+def test_copy_text_edit_survives_widget_key_pruning():
+    # 6/7でcopy_textを編集した後、widget keyがStreamlitの仕様で消えても、
+    # form_dataには編集内容が残ることを確認する。
+    _reset_session_state()
+    article_ui._set_form_data_value("last_text", "AIが作った初稿です。")
+    st.session_state[KEYS["copy_text"]] = "利用者が手直しした本文です。"
+    article_ui._sync_form_data_field_from_widget("copy_text")
+
+    del st.session_state[KEYS["copy_text"]]
+
+    assert article_ui._get_form_data_value("copy_text") == "利用者が手直しした本文です。"
+
+
+def test_copy_text_edit_survives_page6_to_page7_and_back():
+    # 6/7でcopy_textを編集→7/7へ進む→6/7へ戻っても消えないことを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_PRECHECK
+    st.session_state[KEYS["last_text"]] = "AIが作った初稿です。"
+    article_ui._set_form_data_value("last_text", "AIが作った初稿です。")
+
+    render_article_ui(**_common_kwargs())  # ページ6を描画し、AI初稿からcopy_textを自動コピーさせる
+
+    # 利用者が本文を手直しする。
+    st.session_state[KEYS["copy_text"]] = "利用者が手直しした本文です。"
+    article_ui._sync_form_data_field_from_widget("copy_text")
+
+    article_ui._go_to_page(ARTICLE_PAGE_POSTEDIT)
+    render_article_ui(**_common_kwargs())  # ページ7を描画（copy_textのwidgetは描画されない）
+
+    article_ui._go_to_page(ARTICLE_PAGE_PRECHECK)
+    render_article_ui(**_common_kwargs())  # ページ6へ戻る
+
+    assert article_ui._get_form_data_value("copy_text") == "利用者が手直しした本文です。"
+    assert st.session_state[KEYS["copy_text"]] == "利用者が手直しした本文です。"
+
+
+def test_page7_shows_form_data_copy_text(monkeypatch):
+    # 7/7の「保存する本文」がform_data["copy_text"]を見ることを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_POSTEDIT
+    st.session_state[KEYS["last_text"]] = "AIが作った初稿です。"
+    article_ui._set_form_data_value("last_text", "AIが作った初稿です。")
+    article_ui._set_form_data_value("copy_text", "利用者が手直しした本文です。")
+
+    captured_code = []
+    monkeypatch.setattr(st, "code", lambda text, **kwargs: captured_code.append(text))
+
+    render_article_ui(**_common_kwargs())
+
+    assert "利用者が手直しした本文です。" in captured_code
+
+
+def test_last_text_does_not_overwrite_edited_copy_text_on_regenerate(monkeypatch):
+    # 編集済みcopy_textは、下書き再生成（last_text更新）で勝手に上書きされない。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_DRAFT
+    st.session_state[KEYS["consult_situation"]] = "テスト用の状況"
+    st.session_state[KEYS["consult_question"]] = "テスト用の質問"
+    article_ui._set_form_data_value("copy_text", "利用者が手直しした本文です。")
+    article_ui._set_form_data_value("copy_last_sig", "old-sig")
+
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: label == "✨ 下書きを作る")
+
+    render_article_ui(**_common_kwargs())
+
+    assert str(st.session_state.get(KEYS["last_text"], "")).strip() != ""
+    assert article_ui._get_form_data_value("copy_text") == "利用者が手直しした本文です。"
+
+
+def test_copy_text_auto_copied_from_last_text_only_when_blank():
+    # copy_textが空の場合だけ、AI初稿(last_text)から初回コピーされることを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_PRECHECK
+    st.session_state[KEYS["last_text"]] = "AIが作った初稿です。"
+    article_ui._set_form_data_value("last_text", "AIが作った初稿です。")
+    # copy_textは空のまま。
+
+    render_article_ui(**_common_kwargs())
+
+    assert article_ui._get_form_data_value("copy_text") == "AIが作った初稿です。"
+
+
+def test_clear_form_only_empties_form_data_basic_inputs():
+    # 「入力欄を空にする」でform_dataのconsult_situation/consult_questionも
+    # 空になり、古い値が復活しないことを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    st.session_state[KEYS["consult_situation"]] = "テスト用の状況"
+    st.session_state[KEYS["consult_question"]] = "テスト用の質問"
+    render_article_ui(**_common_kwargs())
+
+    article_ui._clear_form_only()
+
+    assert article_ui._get_form_data_value("consult_situation") == ""
+    assert article_ui._get_form_data_value("consult_question") == ""
+
+
+def test_clear_generated_only_empties_form_data_generated_fields():
+    # 「下書きを消す」でform_dataのlast_text/plan_result/copy_text/
+    # copy_last_sigも空になることを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_DRAFT
+    article_ui._set_form_data_value("last_text", "AIが作った初稿です。")
+    article_ui._set_form_data_value("plan_result", "設計図です。")
+    article_ui._set_form_data_value("copy_text", "利用者が手直しした本文です。")
+    article_ui._set_form_data_value("copy_last_sig", "sig-value")
+
+    article_ui._clear_generated_only()
+
+    assert article_ui._get_form_data_value("last_text") == ""
+    assert article_ui._get_form_data_value("plan_result") == ""
+    assert article_ui._get_form_data_value("copy_text") == ""
+    assert article_ui._get_form_data_value("copy_last_sig") == ""

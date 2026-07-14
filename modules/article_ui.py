@@ -240,6 +240,10 @@ def _go_to_page(page: int) -> None:
     # ページを切り替える前に、今表示している入力内容をシャドウStateへ
     # 退避しておく（切り替え後に表示されない欄の値が消えて見えないように）。
     _backup_shadow_state()
+    # article__form_dataが正本のフィールドも、切り替え前に現在のwidget値を
+    # 反映しておく（on_changeの保険。既にform_data化済みのconsult_situation/
+    # consult_question/copy_textが、ページ移動で消えないようにするため）。
+    _sync_form_data_stage1_from_widgets()
     st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = page
 
 
@@ -294,6 +298,111 @@ def get_article_persist_keys() -> set[str]:
 
 def _is_blank(s: object) -> bool:
     return (s is None) or (str(s).strip() == "")
+
+
+# =========================
+# article__form_data（第1段階：単一ソース化の正本）
+# =========================
+# 7ページUIでは、非表示ページのtext_area/text_input(key=KEYS[...])の値が
+# Streamlitの仕様でセッションから消えることがある（非表示widgetの値は
+# 実行完了時にsession_stateから削除される）。article__form_dataは通常の
+# dictであり、widgetのライフサイクルと無関係なため、この問題の影響を
+# 受けない。第1段階では以下のフィールドだけをform_data化する。
+# widget key（KEYS[...]）は今まで通りの名前のまま「表示専用」として使う。
+ARTICLE_FORM_DATA_KEY = "article__form_data"
+
+FORM_DATA_STAGE1_FIELDS: Tuple[str, ...] = (
+    "consult_situation",
+    "consult_question",
+    "last_text",
+    "plan_result",
+    "copy_text",
+    "copy_last_sig",
+)
+
+# form_dataの値を直接編集するwidgetのfield名→widget key。
+# last_text/plan_result/copy_last_sigはwidgetを持たない値のため含めない。
+FORM_DATA_WIDGET_SYNC_FIELDS: Tuple[str, ...] = (
+    "consult_situation",
+    "consult_question",
+    "copy_text",
+)
+
+# _get_effective_value()がform_data経由でも値を拾えるようにするための
+# widget key→form_dataフィールド名の逆引き。
+_FORM_DATA_FIELD_BY_WIDGET_KEY: Dict[str, str] = {
+    KEYS["consult_situation"]: "consult_situation",
+    KEYS["consult_question"]: "consult_question",
+    KEYS["copy_text"]: "copy_text",
+}
+
+
+def _ensure_article_form_data() -> None:
+    """
+    article__form_dataが無ければ作る。
+    旧方式（widget keyのみ）からの移行時は、初回だけ既存のsession_state値を
+    form_dataへ取り込む（articleモードを開いた直後の1回だけ発生する）。
+    """
+    if isinstance(st.session_state.get(ARTICLE_FORM_DATA_KEY), dict):
+        return
+
+    form_data: Dict[str, str] = {}
+    for field in FORM_DATA_STAGE1_FIELDS:
+        existing = st.session_state.get(KEYS[field], "")
+        if not _is_blank(existing):
+            form_data[field] = str(existing)
+    st.session_state[ARTICLE_FORM_DATA_KEY] = form_data
+
+
+def _get_article_form_data() -> Dict[str, str]:
+    _ensure_article_form_data()
+    return st.session_state[ARTICLE_FORM_DATA_KEY]
+
+
+def _get_form_data_value(field: str) -> str:
+    return str(_get_article_form_data().get(field, "") or "")
+
+
+def _set_form_data_value(field: str, value: object) -> None:
+    _get_article_form_data()[field] = str(value or "")
+
+
+def _clear_form_data_fields(*fields: str) -> None:
+    form_data = _get_article_form_data()
+    for field in fields:
+        form_data[field] = ""
+
+
+def _seed_widget_from_form_data_if_missing(field: str) -> None:
+    """
+    widget keyがsession_stateに無い場合（初回描画、またはStreamlitの仕様で
+    非表示中に消えた直後）だけ、form_dataの値を流し込む。widget keyが
+    既に存在する場合は上書きしない＝利用者が今まさに空にした値を
+    古い値で復活させない。
+    """
+    widget_key = KEYS[field]
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = _get_form_data_value(field)
+
+
+def _sync_form_data_field_from_widget(field: str) -> None:
+    """widgetのon_changeから呼ぶ。現在値をそのまま（空文字も含めて）form_dataへ反映する。"""
+    widget_key = KEYS[field]
+    _set_form_data_value(field, st.session_state.get(widget_key, ""))
+
+
+def _sync_form_data_stage1_from_widgets() -> None:
+    """
+    次へ/戻る・下書き作成ボタンなど、明示的なタイミングで呼ぶ保険の同期。
+    on_changeで既に同期されているはずだが、二重の安全網として、現在
+    session_stateに存在するwidget keyだけを対象に同期する（非表示ページの
+    widget keyが既に消えている場合はそのフィールドのform_dataを変更しない
+    ＝空で潰さない）。
+    """
+    for field in FORM_DATA_WIDGET_SYNC_FIELDS:
+        widget_key = KEYS[field]
+        if widget_key in st.session_state:
+            _sync_form_data_field_from_widget(field)
 
 
 def _ensure_ui_flags_initialized() -> None:
@@ -709,16 +818,22 @@ def _clear_shadow_state() -> None:
 
 def _get_effective_value(key: str) -> str:
     """
-    読む専用ヘルパー。widgetの現在値が空でも、article__input_backupや
-    シャドウStateにある直近の非空値を安全に参照する。
+    読む専用ヘルパー。widgetの現在値が空でも、article__form_data・
+    article__input_backup・シャドウStateにある直近の非空値を安全に参照する。
     session_stateへの書き戻しは一切行わない（呼ぶだけでは何も変化しない）。
-    利用者が明示的に入力欄を空にした直後は、backup/shadow側も
+    利用者が明示的に入力欄を空にした直後は、form_data/backup/shadow側も
     _clear_form_only() / _clear_generated_only() で既に空になっているため、
     ここで古い値が「復活して見える」ことはない。
     """
     current = st.session_state.get(key, "")
     if not _is_blank(current):
         return str(current).strip()
+
+    form_data_field = _FORM_DATA_FIELD_BY_WIDGET_KEY.get(key)
+    if form_data_field:
+        form_data_value = _get_form_data_value(form_data_field)
+        if not _is_blank(form_data_value):
+            return str(form_data_value).strip()
 
     backup = st.session_state.get("article__input_backup")
     if isinstance(backup, dict):
@@ -805,13 +920,17 @@ def _reset_copy_state() -> None:
     st.session_state[KEYS["copy_text"]] = ""
     st.session_state[KEYS["copy_last_sig"]] = ""
     st.session_state[KEYS["copy_agree_risk"]] = False
+    _clear_form_data_fields("copy_text", "copy_last_sig")
 
 
 def _set_copy_state_from_text(text: str) -> None:
     body = str(text or "")
+    sig = str(hash(body))
     st.session_state[KEYS["copy_text"]] = body
-    st.session_state[KEYS["copy_last_sig"]] = str(hash(body))
+    st.session_state[KEYS["copy_last_sig"]] = sig
     st.session_state[KEYS["copy_agree_risk"]] = False
+    _set_form_data_value("copy_text", body)
+    _set_form_data_value("copy_last_sig", sig)
 
 
 def _copy_last_text_to_copy_area() -> None:
@@ -834,6 +953,7 @@ def _clear_form_only() -> None:
         st.session_state[k] = ""
     _clear_article_input_backup()
     _clear_shadow_state()
+    _clear_form_data_fields("consult_situation", "consult_question")
     st.session_state[KEYS["save_message"]] = "入力欄を空にしました。最初から整理し直したいときに使えます。"
 
 
@@ -853,6 +973,10 @@ def _clear_generated_only() -> None:
     _clear_shadow_state()
     st.session_state[KEYS["snapshot"]] = {}
     _reset_copy_state()
+    # consult_situation/consult_questionもこの関数内のwidget key側で既に
+    # 空にしているため、form_data側も揃えて空にする（widget keyが後で
+    # Streamlitの仕様で消えたときに、form_dataの古い値で復活しないように）。
+    _clear_form_data_fields("last_text", "plan_result", "consult_situation", "consult_question")
     _reset_ui_flags()
 
     st.session_state["api__status_code"] = ""
@@ -2504,18 +2628,27 @@ def _render_page_1_basic() -> None:
     st.write("まずは2つだけで大丈夫です。")
 
     st.markdown("### 1. 今の状況")
+    # article__form_data["consult_situation"]を正本にする。widget keyが
+    # 非表示ページで消えていた場合だけform_dataから流し込み、既にあれば
+    # 上書きしない（利用者が今まさに空にした値を復活させないため）。
+    _seed_widget_from_form_data_if_missing("consult_situation")
     st.text_area(
         "困っていることや背景を書いてください",
         height=120,
         key=KEYS["consult_situation"],
+        on_change=_sync_form_data_field_from_widget,
+        args=("consult_situation",),
     )
     st.caption("例：63歳会社員。給与28万円と賞与があり、年金がどう変わるか知りたい。")
 
     st.markdown("### 2. 知りたいこと")
+    _seed_widget_from_form_data_if_missing("consult_question")
     st.text_area(
         "何を知りたいか、どう判断したいかを書いてください",
         height=90,
         key=KEYS["consult_question"],
+        on_change=_sync_form_data_field_from_widget,
+        args=("consult_question",),
     )
     st.caption("例：給与と賞与はどう合算されるか。今の基準額は何か。")
 
@@ -2721,6 +2854,16 @@ def render_article_ui(
     use_real_api: bool,
     just_entered_menu: bool = False,
 ) -> None:
+    # _ensure_keys_initialized()はKEYSの各widget keyが無ければ""で埋めるため、
+    # 先に呼んでしまうと「非表示ページでStreamlitの仕様により消えた」という
+    # 状態と「まだ何も入力していない」状態が区別できなくなり、form_data側の
+    # 復元判定（widget keyが本当に無いかどうか）が機能しなくなる。
+    # そのため、form_dataの用意とform_data→widgetの流し込みは、
+    # _ensure_keys_initialized()より必ず先に行う。
+    _ensure_article_form_data()
+    for _field in FORM_DATA_WIDGET_SYNC_FIELDS:
+        _seed_widget_from_form_data_if_missing(_field)
+
     _ensure_keys_initialized()
     _ensure_article_input_backup()
     _restore_stale_inputs_on_page_change()
@@ -2787,6 +2930,7 @@ def render_article_ui(
     _render_page_nav_buttons(position="bottom")
     _backup_article_inputs()
     _backup_shadow_state()
+    _sync_form_data_stage1_from_widgets()
 
 
 def _render_page_5_draft(
@@ -2814,10 +2958,13 @@ def _render_page_5_draft(
     st.caption("確認先を入力した場合は、先に『公式情報・確認先』ページで反映ボタンを押してください。")
 
     if st.button("✨ 下書きを作る", use_container_width=True, key="btn_article_generate"):
+        # article__form_dataが正本のフィールド（consult_situation/question）を
+        # 現在のwidget値で確実に同期しておく（on_changeの保険）。
+        _sync_form_data_stage1_from_widgets()
         # 非表示ページのwidget keyがStreamlitの仕様で空扱いになっていた場合に
-        # 備え、下書き生成本体が直接読むキーだけを対象に、backup/shadowの
-        # 非空値で安全に埋め直してから判定・生成に入る（明示クリア直後は
-        # backup/shadowも空のため、ここで古い値が復活することはない）。
+        # 備え、下書き生成本体が直接読むキーだけを対象に、form_data/backup/
+        # shadowの非空値で安全に埋め直してから判定・生成に入る（明示クリア
+        # 直後はform_data/backup/shadowも空のため、古い値は復活しない）。
         _restore_blank_generation_inputs_from_backup_or_shadow()
         situation, question = _get_current_consult_values()
 
@@ -2872,8 +3019,16 @@ def _render_page_5_draft(
             st.session_state[KEYS["proof_evidence_compact"]] = str(_get_generation_evidence_text())
             st.session_state[KEYS["proof_suggest"]] = str(st.session_state.get(KEYS["suggest"], ""))
             st.session_state[KEYS["proof_memo"]] = str(st.session_state.get(KEYS["memo"], ""))
+            # last_text/plan_resultはarticle__form_dataにも保存する（正本化）。
+            # 既存のsession_state側も、当面は互換のためこのまま更新し続ける。
+            _set_form_data_value("plan_result", plan_text)
+            _set_form_data_value("last_text", text)
 
-            _set_copy_state_from_text(text)
+            # 公開前に自分で直す本文(copy_text)が既に編集済みの場合、
+            # 再生成のたびにAI初稿で勝手に上書きしない。空のときだけ
+            # AI初稿からの初回コピーを行う。
+            if _is_blank(_get_form_data_value("copy_text")):
+                _set_copy_state_from_text(text)
             _save_snapshot()
 
             warns = _post_generation_warnings(text)
@@ -3065,23 +3220,35 @@ def _render_page_6_precheck() -> None:
     st.caption("この欄で文章を直せます。編集前の本文を残したい場合は、先にWordなどへコピーして保管してください。")
     st.caption("直したあとは、次のページの『この文章をAIに確認してもらう』で、気になる箇所をもう一度確認できます。")
 
-    current_copy_text = str(st.session_state.get(KEYS["copy_text"], "") or "")
-    current_copy_sig = str(st.session_state.get(KEYS["copy_last_sig"], "") or "")
+    # article__form_data["copy_text"]を正本にする。widget keyは表示専用のため、
+    # Streamlitの仕様でページ移動により消えていても、ここでform_dataから
+    # 流し込み直すことで編集内容が消えない（既にwidget keyがあれば上書きしない）。
+    _seed_widget_from_form_data_if_missing("copy_text")
+
+    current_copy_text = _get_form_data_value("copy_text")
+    current_copy_sig = _get_form_data_value("copy_last_sig")
     expected_sig = str(hash(last_text))
 
     if _is_blank(current_copy_text):
+        # AI初稿からの初回コピーは、copy_textが空の場合だけ行う。
         _set_copy_state_from_text(last_text)
-        current_copy_text = str(st.session_state.get(KEYS["copy_text"], "") or "")
-        current_copy_sig = str(st.session_state.get(KEYS["copy_last_sig"], "") or "")
+        current_copy_text = _get_form_data_value("copy_text")
+        current_copy_sig = _get_form_data_value("copy_last_sig")
 
     if current_copy_sig == expected_sig:
         st.info("AI初稿を編集用にコピーしています。必要なところだけ直してください。直さない場合は、このまま次へ進めます。")
     else:
         st.info("この欄の文章は、いまのAI下書きとは別に編集されています。続けて直して大丈夫です。")
 
-    st.text_area("公開前に自分で直す本文", key=KEYS["copy_text"], height=420)
+    st.text_area(
+        "公開前に自分で直す本文",
+        key=KEYS["copy_text"],
+        height=420,
+        on_change=_sync_form_data_field_from_widget,
+        args=("copy_text",),
+    )
     _render_copy_button(
-        text=str(st.session_state.get(KEYS["copy_text"], "") or ""),
+        text=_get_form_data_value("copy_text"),
         label="この本文をコピー",
     )
 
@@ -3095,7 +3262,9 @@ def _render_page_7_postedit_save(*, outputs_dir: str) -> None:
         return
 
     guardrail_evidence, _used_fallback = _effective_guardrail_evidence()
-    copy_text = str(st.session_state.get(KEYS["copy_text"], "") or "")
+    # article__form_data["copy_text"]が正本。widget keyはページ6でしか
+    # 描画されないため、直接session_stateを読まずform_data経由で読む。
+    copy_text = _get_form_data_value("copy_text")
 
     st.markdown("### 保存する本文")
     if _is_blank(copy_text):

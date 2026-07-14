@@ -13,6 +13,7 @@ import streamlit as st
 # 画面モジュール
 # =========================
 from modules.article_ui import (
+    ARTICLE_FORM_DATA_KEY,
     ARTICLE_PAGE_BASIC,
     ARTICLE_PAGE_KEYWORD,
     ARTICLE_PAGE_OFFICIAL,
@@ -116,6 +117,20 @@ WORK_SIG_KEYS = [
     "article__evidence_points",
     "article__tone_regulation",
 ]
+
+# article__form_data（記事モード入力の正本）のうち、作業内容の有無判定・
+# 自動保存の重複排除シグネチャに含めるフィールド。widget key
+# （article__consult_situationなど）は非表示ページでStreamlitの仕様により
+# 消えることがあるため、これらのwidget keyだけを見るとform_dataに実際の
+# 入力が残っていても「全欄が空」と誤判定してしまう。form_data側も
+# あわせて見ることでその誤判定を防ぐ。
+ARTICLE_FORM_DATA_WORK_SIG_FIELDS = (
+    "consult_situation",
+    "consult_question",
+    "last_text",
+    "plan_result",
+    "copy_text",
+)
 
 RESTORE_REQUEST_KEYS = [
     "backup__restore_request",
@@ -351,6 +366,12 @@ def _work_signature_payload() -> Dict[str, str]:
     payload: Dict[str, str] = {}
     for key in WORK_SIG_KEYS:
         payload[key] = str(st.session_state.get(key) or "").strip()
+
+    form_data = st.session_state.get(ARTICLE_FORM_DATA_KEY)
+    if isinstance(form_data, dict):
+        for field in ARTICLE_FORM_DATA_WORK_SIG_FIELDS:
+            payload[f"{ARTICLE_FORM_DATA_KEY}.{field}"] = str(form_data.get(field) or "").strip()
+
     return payload
 
 
@@ -631,6 +652,19 @@ def _apply_restore_payload(payload: Dict[str, Any]) -> None:
     for key in RESTORE_APPLY_KEYS:
         if key in payload:
             st.session_state[key] = str(payload.get(key) or "")
+
+    # article__form_data（記事モード入力の正本）はdictのため、他のキーのように
+    # 文字列化せず、そのままマージして復元する。APIキーは絶対に混入させない。
+    form_data_payload = payload.get(ARTICLE_FORM_DATA_KEY)
+    if isinstance(form_data_payload, dict):
+        current_form_data = st.session_state.get(ARTICLE_FORM_DATA_KEY)
+        if not isinstance(current_form_data, dict):
+            current_form_data = {}
+        for field, value in form_data_payload.items():
+            if not isinstance(field, str) or field == "openai_api_key":
+                continue
+            current_form_data[field] = str(value or "")
+        st.session_state[ARTICLE_FORM_DATA_KEY] = current_form_data
 
     # 旧形式 snapshot しかない場合の安全補完
     snapshot = payload.get("snapshot")
