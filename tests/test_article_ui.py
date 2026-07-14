@@ -17,7 +17,6 @@ from modules.article_ui import (
     ARTICLE_PAGE_OFFICIAL,
     ARTICLE_PAGE_DRAFT,
     ARTICLE_PAGE_PRECHECK,
-    ARTICLE_PAGE_POSTEDIT,
     ARTICLE_SCROLL_STORAGE_KEY,
     ARTICLE_TOP_ANCHOR_ID,
     KEYS,
@@ -273,12 +272,17 @@ def test_render_article_ui_does_not_call_scroll_tracker():
     assert "_render_article_scroll_tracker()" not in active_source
 
 
-def test_render_article_ui_does_not_auto_call_scroll_restore():
-    # just_entered_menu時の自動復帰呼び出しが停止されていることを確認する
-    # （コメントアウトされた呼び出しは対象外）。
+def test_render_article_ui_calls_scroll_restore_only_for_hash_clear_on_menu_entry():
+    # hash残留対策として、他モードから記事モードへ入り直した直後
+    # （just_entered_menu）にだけ、hashクリア専用の呼び出し
+    # （restore_even_if_hash_consumed=False）を行うことを確認する。
+    # sessionStorageによる位置復元（True側）は本番Streamlit Cloudで
+    # 不安定要因になったため、引き続き呼ばない。
     active_source = _active_code_lines(inspect.getsource(render_article_ui))
 
-    assert "_render_article_scroll_restore(" not in active_source
+    assert "_render_article_scroll_restore(restore_even_if_hash_consumed=False)" in active_source
+    assert "restore_even_if_hash_consumed=True" not in active_source
+    assert "if just_entered_menu:" in active_source
 
 
 def test_official_info_page_does_not_auto_call_scroll_restore_after_apply():
@@ -311,8 +315,24 @@ def test_official_info_page_has_no_url_hash_or_scroll_markup():
     assert "data-ai-scroll-target" not in source
 
 
+def test_render_article_ui_renders_article_top_anchor(monkeypatch):
+    # hashクリア処理は、id="article-top"がDOM上に存在するときだけ
+    # 「今は記事モード表示中」と判定してhashを消費する設計のため、
+    # このアンカー自体が実際に描画されることを回帰確認する
+    # （アンカーが無いとhashクリアが常に空振りする）。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+
+    markdown_calls = []
+    monkeypatch.setattr(st, "markdown", lambda text, **kwargs: markdown_calls.append(text))
+
+    render_article_ui(**_common_kwargs())
+
+    assert any(f'id="{ARTICLE_TOP_ANCHOR_ID}"' in text for text in markdown_calls)
+
+
 # =========================
-# 記事モードのページ区切り型UI（7ページ）
+# 記事モードのページ区切り型UI（6ページ）
 # =========================
 
 def _common_kwargs():
@@ -333,6 +353,13 @@ def test_article_active_page_defaults_to_basic_page():
     assert ARTICLE_PAGE_BASIC == 1
 
 
+def test_article_mode_is_six_pages_and_precheck_is_the_last_page():
+    # 7/7（編集後確認・保存）を削除し、記事モードを6ページ構成に戻したことを
+    # 確認する。6/6（下書きの確認）が最終ページになる。
+    assert article_ui.ARTICLE_PAGE_COUNT == 6
+    assert ARTICLE_PAGE_PRECHECK == article_ui.ARTICLE_PAGE_COUNT
+
+
 def test_render_article_ui_dispatches_only_the_active_page(monkeypatch):
     _reset_session_state()
     st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_OFFICIAL
@@ -344,7 +371,6 @@ def test_render_article_ui_dispatches_only_the_active_page(monkeypatch):
     monkeypatch.setattr(article_ui, "_render_page_4_writing_style", lambda: calls.append(4))
     monkeypatch.setattr(article_ui, "_render_page_5_draft", lambda **kw: calls.append(5))
     monkeypatch.setattr(article_ui, "_render_page_6_precheck", lambda: calls.append(6))
-    monkeypatch.setattr(article_ui, "_render_page_7_postedit_save", lambda **kw: calls.append(7))
 
     render_article_ui(**_common_kwargs())
 
@@ -372,7 +398,7 @@ def test_page_nav_buttons_show_only_next_on_first_page(monkeypatch):
 
 def test_page_nav_buttons_show_only_back_on_last_page(monkeypatch):
     _reset_session_state()
-    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_POSTEDIT
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_PRECHECK
 
     captured = []
     monkeypatch.setattr(st, "button", lambda label, **kwargs: captured.append(label))
@@ -764,8 +790,8 @@ def test_generate_draft_reads_form_data_directly_without_backup_or_shadow(monkey
 
 
 def test_page6_does_not_render_manual_edit_text_area(monkeypatch):
-    # 記事モードの役割を「AI下書きを作る場所」に戻すため、6/7には手動編集用の
-    # 大きなst.text_areaを置かないことを確認する（回帰防止）。
+    # 記事モードの役割を「AI下書きを作る場所」に戻すため、6/6（最終ページ）には
+    # 手動編集用の大きなst.text_areaを置かないことを確認する（回帰防止）。
     _reset_session_state()
     st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_PRECHECK
     st.session_state[KEYS["last_text"]] = "AIが作った初稿です。"
@@ -780,7 +806,7 @@ def test_page6_does_not_render_manual_edit_text_area(monkeypatch):
 
 
 def test_page6_shows_last_text_readonly(monkeypatch):
-    # 6/7はlast_textを読み取り専用で表示することを確認する。
+    # 6/6はlast_textを読み取り専用で表示することを確認する。
     _reset_session_state()
     st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_PRECHECK
     st.session_state[KEYS["last_text"]] = "AIが作った初稿です。"
@@ -794,25 +820,11 @@ def test_page6_shows_last_text_readonly(monkeypatch):
     assert "AIが作った初稿です。" in captured_code
 
 
-def test_page7_does_not_render_manual_edit_text_area(monkeypatch):
-    # 7/7にも大きな手動編集欄は置かないことを確認する。
+def test_page6_shows_check_mode_handoff_not_save_body(monkeypatch):
+    # 6/6（最終ページ）は「保存する本文」ではなく、文章チェックへ進む導線に
+    # なっていることを確認する。
     _reset_session_state()
-    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_POSTEDIT
-    st.session_state[KEYS["last_text"]] = "AIが作った初稿です。"
-    article_ui._set_form_data_value("last_text", "AIが作った初稿です。")
-
-    text_area_calls = []
-    monkeypatch.setattr(st, "text_area", lambda *a, **k: text_area_calls.append((a, k)))
-
-    render_article_ui(**_common_kwargs())
-
-    assert text_area_calls == []
-
-
-def test_page7_shows_check_mode_handoff_not_save_body(monkeypatch):
-    # 7/7は「保存する本文」ではなく、文章チェックへ進む導線になっていることを確認する。
-    _reset_session_state()
-    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_POSTEDIT
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_PRECHECK
     st.session_state[KEYS["last_text"]] = "AIが作った初稿です。"
     article_ui._set_form_data_value("last_text", "AIが作った初稿です。")
 

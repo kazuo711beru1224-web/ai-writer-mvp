@@ -204,7 +204,7 @@ QUESTION_TYPE_LABELS: Dict[str, str] = {
 REFERENCE_HINT_OPEN_KEY = "article__show_reference_hint"
 
 # 記事モードのページ区切り型UI（長い1ページ型のスクロールをやめ、
-# 1画面あたり数項目だけを表示する7ページ構成で「前へ」「次へ」により
+# 1画面あたり数項目だけを表示する6ページ構成で「前へ」「次へ」により
 # 表示区画を切り替えるための現在地）。値は入力保存の対象ではなく画面表示
 # だけの状態なので、PERSIST_KEYSには含めない（get_article_persist_keys参照）。
 ARTICLE_ACTIVE_PAGE_KEY = "article__active_page"
@@ -213,9 +213,8 @@ ARTICLE_PAGE_KEYWORD = 2     # 検索キーワード・詳細設定入口
 ARTICLE_PAGE_OFFICIAL = 3    # 公式情報・確認先
 ARTICLE_PAGE_STYLE = 4       # 書き方の希望
 ARTICLE_PAGE_DRAFT = 5       # 下書き作成
-ARTICLE_PAGE_PRECHECK = 6    # 下書きの確認
-ARTICLE_PAGE_POSTEDIT = 7    # 文章チェックへ進む
-ARTICLE_PAGE_COUNT = 7
+ARTICLE_PAGE_PRECHECK = 6    # 下書きの確認・文章チェックへ
+ARTICLE_PAGE_COUNT = 6
 ARTICLE_PAGE_LABELS: Dict[int, str] = {
     ARTICLE_PAGE_BASIC: "基本入力",
     ARTICLE_PAGE_KEYWORD: "キーワード",
@@ -223,7 +222,6 @@ ARTICLE_PAGE_LABELS: Dict[int, str] = {
     ARTICLE_PAGE_STYLE: "書き方",
     ARTICLE_PAGE_DRAFT: "下書き作成",
     ARTICLE_PAGE_PRECHECK: "下書きの確認",
-    ARTICLE_PAGE_POSTEDIT: "文章チェックへ進む",
 }
 
 # シャドウStateからの復元(_restore_shadow_state_to_blanks)を、実際に
@@ -304,7 +302,7 @@ def _is_blank(s: object) -> bool:
 # =========================
 # article__form_data（第1段階：単一ソース化の正本）
 # =========================
-# 7ページUIでは、非表示ページのtext_area/text_input(key=KEYS[...])の値が
+# 6ページUIでは、非表示ページのtext_area/text_input(key=KEYS[...])の値が
 # Streamlitの仕様でセッションから消えることがある（非表示widgetの値は
 # 実行完了時にsession_stateから削除される）。article__form_dataは通常の
 # dictであり、widgetのライフサイクルと無関係なため、この問題の影響を
@@ -854,7 +852,7 @@ def _get_effective_value(key: str) -> str:
 def _get_current_consult_values() -> Tuple[str, str]:
     """
     「今の状況」「知りたいこと」の実質的な現在値を返す読む専用ヘルパー。
-    5/7ページの「入力あり」表示と、「下書きを作る」ボタンの入力不足判定は、
+    5/6ページの「入力あり」表示と、「下書きを作る」ボタンの入力不足判定は、
     表示と判定がずれないよう、必ずこの関数だけを見て一致させる。
     """
     return (
@@ -2872,17 +2870,25 @@ def render_article_ui(
     _ensure_article_input_backup()
     _restore_stale_inputs_on_page_change()
 
-    # 記事モードの自動スクロール保存・自動復帰（tracker/restore）はいったん
-    # 停止中。本番Streamlit Cloudで、入力・クリック・詳細設定の開閉など
-    # 通常操作で発生する意図しないscrollイベントまでsessionStorageに
-    # 保存してしまい、次にmenuへ戻った際に無関係な位置へ復帰する不安定要因に
-    # なっていたため。関数本体は削除せず残し、呼び出しのみ止めている
-    # （_build_article_scroll_tracker_script_html / _render_article_scroll_tracker /
-    # _build_article_scroll_restore_script_html / _render_article_scroll_restore）。
-    # _render_article_scroll_tracker()
-    # if just_entered_menu:
-    #     _render_article_scroll_restore(restore_even_if_hash_consumed=True)
-    _ = just_entered_menu
+    # 記事モードの先頭アンカー。文章チェックモードのページ内リンク
+    # （#quality-fix-place等）を踏んだ後に記事モードへ戻ってきても、
+    # 下のhashクリア処理がこの要素の有無で「今は記事モード表示中」を
+    # 判定できるようにするための目印（表示上は何もしない）。
+    st.markdown(f'<div id="{ARTICLE_TOP_ANCHOR_ID}" style="scroll-margin-top: 120px;"></div>', unsafe_allow_html=True)
+
+    # 記事モードの自動スクロール位置復帰（sessionStorageに保存した位置への
+    # 自動巻き戻し）はいったん停止中。本番Streamlit Cloudで、入力・クリック・
+    # 詳細設定の開閉など通常操作で発生する意図しないscrollイベントまで
+    # sessionStorageに保存してしまい、次にmenuへ戻った際に無関係な位置へ
+    # 復帰する不安定要因になっていたため（tracker側は今も呼び出さない）。
+    # 一方、文章チェックモードなど他モードのページ内リンクを踏んだ後に記事モード
+    # へ戻ると、ブラウザのURL hashが残ったままになり、Streamlit本体の見出し
+    # アンカー機能が誤って自動で画面を動かす要因になっていた。restore関数は
+    # hashクリアとsessionStorage復帰の両方を担うが、restore_even_if_hash_consumed=False
+    # （既定）で呼べばhashクリアのみを行いsessionStorage復帰へは進まないため、
+    # 不安定要因になったsessionStorage復帰を再開せずにhash残留だけをここで解消する。
+    if just_entered_menu:
+        _render_article_scroll_restore(restore_even_if_hash_consumed=False)
 
     _render_save_restore_notice(logs_dir=logs_dir)
     _render_sensitive_notice_box()
@@ -2903,7 +2909,7 @@ def render_article_ui(
     st.divider()
 
     # 記事モードのページ区切り型UI：長い1ページ型のスクロールをやめ、
-    # 1画面あたり数項目だけの7ページに分け、「前へ」「次へ」で切り替える。
+    # 1画面あたり数項目だけの6ページに分け、「前へ」「次へ」で切り替える。
     # 入力値はどのページでも同じsession_state(KEYS)を参照するため、
     # ページを移動しても入力内容は消えない。
     active_page = st.session_state.get(ARTICLE_ACTIVE_PAGE_KEY, ARTICLE_PAGE_BASIC)
@@ -2925,10 +2931,8 @@ def render_article_ui(
             openai_api_key=openai_api_key,
             use_real_api=use_real_api,
         )
-    elif active_page == ARTICLE_PAGE_PRECHECK:
-        _render_page_6_precheck()
     else:
-        _render_page_7_postedit_save()
+        _render_page_6_precheck()
 
     st.divider()
     _render_page_nav_buttons(position="bottom")
@@ -3206,32 +3210,6 @@ def _send_last_text_to_check_mode() -> None:
     st.session_state["menu_request"] = QUALITY_MENU_LABEL
 
 
-def _render_draft_readonly_and_handoff(*, key_suffix: str) -> None:
-    """
-    6/7・7/7で共通の「AI下書きを読み取り専用で表示し、文章チェックへ渡す」導線。
-    last_text（article__form_dataが正本）を表示するだけで、記事モード内では
-    本文を編集しない。
-    """
-    last_text = str(st.session_state.get(KEYS["last_text"], "") or "")
-
-    st.markdown("### 📄 AIが作った下書き（読み取り専用）")
-    st.caption("この本文はここでは直接編集できません。手直しと最終確認は『文章チェック』モードで行ってください。")
-    st.code(last_text, language="text")
-    _render_copy_button(text=last_text, label="この下書きをコピー")
-
-    st.divider()
-    st.markdown("### 📋 文章チェックへ進む")
-    st.caption("下の欄に貼り付けると、文章チェックモードの入力欄にそのまま反映されます。")
-    if st.button(
-        "📋 文章チェックへ貼り付ける",
-        key=f"btn_article_send_to_check_{key_suffix}",
-        use_container_width=True,
-    ):
-        _send_last_text_to_check_mode()
-        st.success("文章チェックモードへ貼り付けました。左メニューの『文章チェック』を開いてください。")
-        st.rerun()
-
-
 def _render_page_6_precheck() -> None:
     st.markdown("## ✅ 下書きの確認")
     last_text = str(st.session_state.get(KEYS["last_text"], "") or "")
@@ -3258,17 +3236,19 @@ def _render_page_6_precheck() -> None:
     if level == "RISK":
         st.warning("AIが作った下書きには確認したい点があります。文章チェックモードで直してから、もう一度確認すると安全です。")
 
-    _render_draft_readonly_and_handoff(key_suffix="page6")
+    st.markdown("### 📄 AIが作った下書き（読み取り専用）")
+    st.caption("この本文はここでは直接編集できません。手直しと最終確認・保存は『文章チェック』モードで行ってください。")
+    st.code(last_text, language="text")
+    _render_copy_button(text=last_text, label="この下書きをコピー")
 
-
-def _render_page_7_postedit_save() -> None:
-    st.markdown("## 📋 文章チェックへ進む")
-    last_text = str(st.session_state.get(KEYS["last_text"], "") or "")
-
-    if _is_blank(last_text):
-        st.info("※まだ下書きは作られていません。『下書き作成』ページで『下書きを作る』を押してください。")
-        return
-
-    st.caption("記事モードでは本文の保存はしません。手直し・最終確認・保存は『文章チェック』モードで行ってください。")
-
-    _render_draft_readonly_and_handoff(key_suffix="page7")
+    st.divider()
+    st.markdown("### 📋 文章チェックへ進む")
+    st.caption("下の欄に貼り付けると、文章チェックモードの入力欄にそのまま反映されます。")
+    if st.button(
+        "📋 文章チェックへ貼り付ける",
+        key="btn_article_send_to_check_page6",
+        use_container_width=True,
+    ):
+        _send_last_text_to_check_mode()
+        st.success("文章チェックモードへ貼り付けました。左メニューの『文章チェック』を開いてください。")
+        st.rerun()

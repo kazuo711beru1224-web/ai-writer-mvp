@@ -70,6 +70,5 @@ def test_article_mode_sidebar_navigation_uses_buttons_with_active_page():
         "ARTICLE_PAGE_STYLE",
         "ARTICLE_PAGE_DRAFT",
         "ARTICLE_PAGE_PRECHECK",
-        "ARTICLE_PAGE_POSTEDIT",
     ):
         assert target_page in source
