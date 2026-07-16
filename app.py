@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 # =========================
 # 画面モジュール
@@ -22,6 +23,8 @@ from modules.article_ui import (
     ARTICLE_PAGE_PRECHECK,
     render_article_ui,
     _go_to_page as _go_to_article_page,
+    _backup_shadow_state as _backup_article_shadow_state,
+    _sync_form_data_stage1_from_widgets as _sync_article_form_data_from_widgets,
 )
 from modules.home_ui import render_home_ui
 from modules.quality_ui import (
@@ -31,6 +34,7 @@ from modules.quality_ui import (
     QUALITY_PAGE_FIX_SAVE,
     render_quality_ui,
     _go_to_quality_page,
+    _sync_quality_widgets_to_saved,
 )
 from modules.official_procedure_ui import render_official_procedure_ui
 
@@ -255,6 +259,40 @@ STATE_EXCLUDE_PREFIXES = (
     "tmp__",
     "article_shadow__",
 )
+
+
+# =========================
+# URL hashの安全なクリア（共通・全モード）
+# =========================
+# 文章チェックモードの旧href導線（#quality-fix-place等）のように、過去の
+# アンカー由来のURL hashがブラウザに残ったまま、hashを消す処理を持つ記事
+# モードに入るまで消えずに残ってしまう問題への対処。history.replaceState
+# でhash文字列だけを取り除く最小処理を、モードに関わらずmain()から毎回
+# 呼び出す。
+#
+# scrollIntoView・sessionStorageへの保存や復元、自動スクロール、画面移動は
+# 一切行わない（本番Streamlit Cloudで不安定要因になった経緯があるため、
+# 絶対に復活させない）。
+_HASH_CLEAR_SCRIPT_HTML = """<script>
+(function() {
+    var win = window.parent || window;
+    try {
+        if (win.location && win.location.hash) {
+            if (win.history && win.history.replaceState) {
+                win.history.replaceState(null, '', win.location.pathname + win.location.search);
+            }
+        }
+    } catch (e) {}
+})();
+</script>"""
+
+
+def _build_hash_clear_script_html() -> str:
+    return _HASH_CLEAR_SCRIPT_HTML
+
+
+def _render_hash_clear() -> None:
+    components.html(_build_hash_clear_script_html(), height=0)
 
 
 def _inject_global_style() -> None:
@@ -848,6 +886,16 @@ def _render_sidebar() -> str:
         )
         if chosen != current_menu:
             st.session_state["menu_request"] = chosen
+            # メニュー切替はこの下のrerun呼び出しでその場に打ち切られ、
+            # render_article_ui/render_quality_ui末尾の正本同期
+            # （widget→article__form_data・widget→quality__manual_text_saved）
+            # まで到達できない。切替直前の入力を取りこぼさないよう、
+            # rerun呼び出しの前にモードごとの同期を挟む。
+            if current_menu == MENU_ARTICLE:
+                _backup_article_shadow_state()
+                _sync_article_form_data_from_widgets()
+            elif current_menu == MENU_CHECK:
+                _sync_quality_widgets_to_saved()
             # メニュー切替のrerunでmain()末尾の自動保存まで到達できなくなるため、
             # 切替直前にここで自動保存しておく（記事モード入力の取りこぼし防止）。
             _autosave_state(LOGS_DIR)
@@ -988,6 +1036,10 @@ def main() -> None:
     _ensure_dirs()
     _init_session_state()
     _normalize_menu()
+
+    # モードに関わらず、URL hashの残骸をここで毎回安全に消す
+    # （scrollIntoView・sessionStorage復元・画面移動は一切行わない）。
+    _render_hash_clear()
 
     menu = _render_sidebar()
 

@@ -306,8 +306,13 @@ def _is_blank(s: object) -> bool:
 # Streamlitの仕様でセッションから消えることがある（非表示widgetの値は
 # 実行完了時にsession_stateから削除される）。article__form_dataは通常の
 # dictであり、widgetのライフサイクルと無関係なため、この問題の影響を
-# 受けない。第1段階では以下のフィールドだけをform_data化する。
-# widget key（KEYS[...]）は今まで通りの名前のまま「表示専用」として使う。
+# 受けない。widget key（KEYS[...]）は今まで通りの名前のまま「表示専用」
+# として使う。
+#
+# 第1段階（consult_situation/consult_question/last_text/plan_result/
+# copy_text/copy_last_sig）に続き、第2段階としてメニュー移動（記事モード
+# ⇔ 他モード）をまたいでも空にならないよう、基本入力・検索キーワード・
+# 確認先・書き方の希望の各欄もform_data化する。
 ARTICLE_FORM_DATA_KEY = "article__form_data"
 
 FORM_DATA_STAGE1_FIELDS: Tuple[str, ...] = (
@@ -317,6 +322,17 @@ FORM_DATA_STAGE1_FIELDS: Tuple[str, ...] = (
     "plan_result",
     "copy_text",
     "copy_last_sig",
+    "main_kw",
+    "sub_kw",
+    "theme",
+    "memo",
+    "evidence_url",
+    "evidence_title",
+    "evidence_facts",
+    "evidence_points",
+    "evidence",
+    "suggest",
+    "tone_reg",
 )
 
 # form_dataの値を直接編集するwidgetのfield名→widget key。
@@ -325,14 +341,24 @@ FORM_DATA_WIDGET_SYNC_FIELDS: Tuple[str, ...] = (
     "consult_situation",
     "consult_question",
     "copy_text",
+    "main_kw",
+    "sub_kw",
+    "theme",
+    "memo",
+    "evidence_url",
+    "evidence_title",
+    "evidence_facts",
+    "evidence_points",
+    "evidence",
+    "suggest",
+    "tone_reg",
 )
 
 # _get_effective_value()がform_data経由でも値を拾えるようにするための
-# widget key→form_dataフィールド名の逆引き。
+# widget key→form_dataフィールド名の逆引き。FORM_DATA_WIDGET_SYNC_FIELDSと
+# 常に一致させるため、ハードコードせずここから機械的に生成する。
 _FORM_DATA_FIELD_BY_WIDGET_KEY: Dict[str, str] = {
-    KEYS["consult_situation"]: "consult_situation",
-    KEYS["consult_question"]: "consult_question",
-    KEYS["copy_text"]: "copy_text",
+    KEYS[field]: field for field in FORM_DATA_WIDGET_SYNC_FIELDS
 }
 
 
@@ -952,7 +978,15 @@ def _clear_form_only() -> None:
         st.session_state[k] = ""
     _clear_article_input_backup()
     _clear_shadow_state()
-    _clear_form_data_fields("consult_situation", "consult_question")
+    # widget key側で空にしたフィールドは、form_data側も揃えて空にする
+    # （widget keyが後でStreamlitの仕様で消えたときに、form_dataの
+    #   古い値で復活しないように）。copy_textはこの関数の対象外のため含めない。
+    _clear_form_data_fields(
+        "main_kw", "sub_kw", "theme", "memo", "tone_reg",
+        "consult_situation", "consult_question",
+        "evidence_url", "evidence_title", "evidence_facts", "evidence_points",
+        "evidence", "suggest",
+    )
     st.session_state[KEYS["save_message"]] = "入力欄を空にしました。最初から整理し直したいときに使えます。"
 
 
@@ -972,10 +1006,16 @@ def _clear_generated_only() -> None:
     _clear_shadow_state()
     st.session_state[KEYS["snapshot"]] = {}
     _reset_copy_state()
-    # consult_situation/consult_questionもこの関数内のwidget key側で既に
-    # 空にしているため、form_data側も揃えて空にする（widget keyが後で
-    # Streamlitの仕様で消えたときに、form_dataの古い値で復活しないように）。
-    _clear_form_data_fields("last_text", "plan_result", "consult_situation", "consult_question")
+    # この関数内のwidget key側で既に空にしているフィールドは、form_data側も
+    # 揃えて空にする（widget keyが後でStreamlitの仕様で消えたときに、
+    # form_dataの古い値で復活しないように）。proof_*はform_data対象外のため含めない。
+    _clear_form_data_fields(
+        "last_text", "plan_result",
+        "consult_situation", "consult_question",
+        "main_kw", "sub_kw", "theme", "memo", "tone_reg",
+        "evidence_url", "evidence_title", "evidence_facts", "evidence_points",
+        "evidence", "suggest",
+    )
     _reset_ui_flags()
 
     st.session_state["api__status_code"] = ""
@@ -1011,6 +1051,10 @@ def _restore_snapshot_fill_blanks() -> None:
 
     _sync_evidence_text_from_parts()
     _reset_copy_state()
+    # 復元した値をform_data側にも反映する。ここで揃えておかないと、後で
+    # 一度も他ページへ移動しないままメニューをまたいだ場合に、widget keyが
+    # Streamlitの仕様で消えた際、form_dataの古い（空の）値で復活してしまう。
+    _sync_form_data_stage1_from_widgets()
 
     if restored_any:
         st.session_state[KEYS["save_message"]] = "空欄だけ前の状態を戻しました。続きを進めやすくなります。"

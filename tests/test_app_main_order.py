@@ -97,3 +97,61 @@ def test_quality_mode_sidebar_navigation_uses_buttons_with_active_page():
         "QUALITY_PAGE_FIX_SAVE",
     ):
         assert target_page in source
+
+
+# =========================
+# URL hashの安全なクリア（共通・全モード）
+# =========================
+
+def test_hash_clear_script_has_no_scroll_into_view_or_session_storage():
+    # #quality-fix-place等の残骸を消す専用処理は、scrollIntoViewや
+    # sessionStorageへの保存・復元を絶対に含めない設計であることを確認する。
+    html_out = app._build_hash_clear_script_html()
+
+    assert "scrollIntoView" not in html_out
+    assert "sessionStorage" not in html_out
+
+
+def test_hash_clear_script_uses_history_replace_state_only():
+    # hashクリアはhistory.replaceStateだけで行う設計であることを確認する。
+    html_out = app._build_hash_clear_script_html()
+
+    assert "history.replaceState" in html_out
+    assert "<script>" in html_out
+    # 画面移動・自動スクロールにつながる要素を持ち込んでいないことも確認する。
+    assert "scrollTop" not in html_out
+    assert "scrollIntoView" not in html_out
+
+
+def test_render_hash_clear_is_called_before_render_current_page():
+    # モードに関わらず、本文が描画される前にhashクリアが走ることを確認する。
+    source = inspect.getsource(app.main)
+
+    hash_clear_pos = source.index("_render_hash_clear()")
+    render_pos = source.index("_render_current_page(menu)")
+
+    assert hash_clear_pos < render_pos
+
+
+# =========================
+# メニュー切替時の同期漏れ対策
+# （st.rerun()でrender_article_ui/render_quality_ui末尾の同期に
+#   到達できない問題の回帰確認）
+# =========================
+
+def test_sidebar_syncs_article_form_data_before_menu_switch_rerun():
+    source = inspect.getsource(app._render_sidebar)
+
+    sync_pos = source.index("_sync_article_form_data_from_widgets()")
+    rerun_pos = source.index("st.rerun()")
+
+    assert sync_pos < rerun_pos
+
+
+def test_sidebar_syncs_quality_widgets_before_menu_switch_rerun():
+    source = inspect.getsource(app._render_sidebar)
+
+    sync_pos = source.index("_sync_quality_widgets_to_saved()")
+    rerun_pos = source.index("st.rerun()")
+
+    assert sync_pos < rerun_pos

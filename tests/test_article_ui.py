@@ -14,7 +14,9 @@ from modules.article_ui import (
     render_article_ui,
     ARTICLE_ACTIVE_PAGE_KEY,
     ARTICLE_PAGE_BASIC,
+    ARTICLE_PAGE_KEYWORD,
     ARTICLE_PAGE_OFFICIAL,
+    ARTICLE_PAGE_STYLE,
     ARTICLE_PAGE_DRAFT,
     ARTICLE_PAGE_PRECHECK,
     ARTICLE_SCROLL_STORAGE_KEY,
@@ -900,3 +902,184 @@ def test_clear_generated_only_empties_form_data_generated_fields():
     assert article_ui._get_form_data_value("plan_result") == ""
     assert article_ui._get_form_data_value("copy_text") == ""
     assert article_ui._get_form_data_value("copy_last_sig") == ""
+
+
+# =========================
+# article__form_data 第2段階：未対応入力欄の追加
+# （メニュー往復で記事モードの入力欄が空になる問題の回帰確認）
+# =========================
+
+_EXPANDED_FORM_DATA_FIELDS = (
+    "main_kw",
+    "sub_kw",
+    "theme",
+    "memo",
+    "evidence_url",
+    "evidence_title",
+    "evidence_facts",
+    "evidence_points",
+    "evidence",
+    "suggest",
+    "tone_reg",
+)
+
+
+def test_form_data_stage1_fields_cover_previously_unprotected_inputs():
+    # 未対応だった基本入力・確認先・書き方の希望の各欄が、
+    # 第1段階のフィールド群に追加されたことを確認する。
+    for field in _EXPANDED_FORM_DATA_FIELDS:
+        assert field in article_ui.FORM_DATA_STAGE1_FIELDS
+        assert field in article_ui.FORM_DATA_WIDGET_SYNC_FIELDS
+
+    # 既存フィールドが温存されていることも回帰確認する。
+    for legacy_field in (
+        "consult_situation", "consult_question",
+        "last_text", "plan_result", "copy_text", "copy_last_sig",
+    ):
+        assert legacy_field in article_ui.FORM_DATA_STAGE1_FIELDS
+
+
+def test_form_data_field_by_widget_key_matches_sync_fields():
+    # _get_effective_value()が使う逆引き辞書が、FORM_DATA_WIDGET_SYNC_FIELDS
+    # と常に一致していることを確認する（ハードコードの取りこぼしを防ぐ）。
+    for field in article_ui.FORM_DATA_WIDGET_SYNC_FIELDS:
+        widget_key = KEYS[field]
+        assert article_ui._FORM_DATA_FIELD_BY_WIDGET_KEY[widget_key] == field
+
+
+def test_article_form_data_never_stores_api_key():
+    # ベル憲法：APIキーはarticle__form_dataへ絶対に入れない。
+    assert "openai_api_key" not in KEYS.values()
+    assert "openai_api_key" not in article_ui.FORM_DATA_STAGE1_FIELDS
+
+
+def test_expanded_fields_are_reseeded_from_form_data_when_widget_key_missing():
+    # widget key削除（Streamlitの仕様で非表示ページ・非表示モードの値が
+    # 消える挙動）を模擬しても、article__form_dataから正しく再シード
+    # されることを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_STYLE
+    st.session_state[article_ui.ARTICLE_FORM_DATA_KEY] = {
+        "main_kw": "相続税",
+        "sub_kw": "基礎控除",
+        "theme": "相続税の基本",
+        "memo": "わかりやすく",
+        "evidence_url": "https://example.jp/tax",
+        "evidence_title": "国税庁資料",
+        "evidence_facts": "3000万円",
+        "evidence_points": "基礎控除の計算方法",
+        "suggest": "相続税, 基礎控除",
+        "tone_reg": "だ・である調",
+    }
+    # widget keyは一切存在しない状態（初回描画やメニュー往復直後を再現）。
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["main_kw"]] == "相続税"
+    assert st.session_state[KEYS["sub_kw"]] == "基礎控除"
+    assert st.session_state[KEYS["theme"]] == "相続税の基本"
+    assert st.session_state[KEYS["memo"]] == "わかりやすく"
+    assert st.session_state[KEYS["evidence_url"]] == "https://example.jp/tax"
+    assert st.session_state[KEYS["evidence_title"]] == "国税庁資料"
+    assert st.session_state[KEYS["evidence_facts"]] == "3000万円"
+    assert st.session_state[KEYS["evidence_points"]] == "基礎控除の計算方法"
+    assert st.session_state[KEYS["suggest"]] == "相続税, 基礎控除"
+    assert st.session_state[KEYS["tone_reg"]] == "だ・である調"
+
+
+def test_menu_round_trip_does_not_blank_article_inputs():
+    # 本番で報告された不具合の回帰テスト：
+    # 記事モード→他モード→記事モードという往復（ページ番号は変わらない）で、
+    # Streamlitの仕様によりwidget keyがsession_stateから削除された状態を
+    # 再現しても、入力欄が空に見えないことを確認する。
+    # （_restore_stale_inputs_on_page_change()はページ番号が変わった時にしか
+    #   復元しないため、form_data化前はこのケースで空欄化していた）
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_KEYWORD
+
+    st.session_state[KEYS["main_kw"]] = "在職老齢年金"
+    st.session_state[KEYS["sub_kw"]] = "支給停止"
+    st.session_state[KEYS["theme"]] = "年金の仕組み"
+    st.session_state[KEYS["memo"]] = "わかりやすく"
+    st.session_state[KEYS["evidence_url"]] = "https://example.jp/pension"
+    st.session_state[KEYS["evidence_title"]] = "厚生労働省資料"
+    st.session_state[KEYS["evidence_facts"]] = "65歳"
+    st.session_state[KEYS["evidence_points"]] = "支給停止の条件"
+    st.session_state[KEYS["suggest"]] = "在職老齢年金, 支給停止"
+    st.session_state[KEYS["tone_reg"]] = "ですます調"
+
+    render_article_ui(**_common_kwargs())
+
+    # メニュー移動で記事モードが描画されない1回のrerunを経て、
+    # Streamlitがwidget keyをsession_stateから削除する挙動を再現する。
+    # ARTICLE_ACTIVE_PAGE_KEYはwidget keyではないため、この間も
+    # ARTICLE_PAGE_KEYWORDのまま維持される（＝ページ番号は変わらない）。
+    for field in (
+        "main_kw", "sub_kw", "theme", "memo",
+        "evidence_url", "evidence_title", "evidence_facts", "evidence_points",
+        "suggest", "tone_reg",
+    ):
+        del st.session_state[KEYS[field]]
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["main_kw"]] == "在職老齢年金"
+    assert st.session_state[KEYS["sub_kw"]] == "支給停止"
+    assert st.session_state[KEYS["theme"]] == "年金の仕組み"
+    assert st.session_state[KEYS["memo"]] == "わかりやすく"
+    assert st.session_state[KEYS["evidence_url"]] == "https://example.jp/pension"
+    assert st.session_state[KEYS["evidence_title"]] == "厚生労働省資料"
+    assert st.session_state[KEYS["evidence_facts"]] == "65歳"
+    assert st.session_state[KEYS["evidence_points"]] == "支給停止の条件"
+    assert st.session_state[KEYS["suggest"]] == "在職老齢年金, 支給停止"
+    assert st.session_state[KEYS["tone_reg"]] == "ですます調"
+
+
+def test_clear_form_only_empties_form_data_for_expanded_fields():
+    # 「入力欄を空にする」で、拡張したform_dataフィールドも空になり、
+    # メニュー往復後に古い値で復活しないことを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    st.session_state[KEYS["main_kw"]] = "テストキーワード"
+    st.session_state[KEYS["evidence_url"]] = "https://example.jp"
+    render_article_ui(**_common_kwargs())
+
+    article_ui._clear_form_only()
+
+    for field in _EXPANDED_FORM_DATA_FIELDS:
+        assert article_ui._get_form_data_value(field) == ""
+
+
+def test_clear_generated_only_empties_form_data_for_expanded_fields():
+    # 「下書きを消す」でも、拡張したform_dataフィールドが空になることを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    st.session_state[KEYS["main_kw"]] = "テストキーワード"
+    st.session_state[KEYS["evidence_url"]] = "https://example.jp"
+    render_article_ui(**_common_kwargs())
+
+    article_ui._clear_generated_only()
+
+    for field in _EXPANDED_FORM_DATA_FIELDS:
+        assert article_ui._get_form_data_value(field) == ""
+
+
+def test_restore_snapshot_fill_blanks_syncs_restored_values_into_form_data():
+    # 空欄だけ前の状態を戻す操作の後、form_data側にも復元後の値が
+    # 反映されていることを確認する（反映しないと、後でwidget keyが
+    # Streamlitの仕様で消えたときに、form_dataの古い空値で再び
+    # 空欄化してしまう）。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    st.session_state[KEYS["main_kw"]] = "元のキーワード"
+    render_article_ui(**_common_kwargs())
+
+    article_ui._save_snapshot()
+
+    st.session_state[KEYS["main_kw"]] = ""
+    article_ui._sync_form_data_field_from_widget("main_kw")
+
+    article_ui._restore_snapshot_fill_blanks()
+
+    assert st.session_state[KEYS["main_kw"]] == "元のキーワード"
+    assert article_ui._get_form_data_value("main_kw") == "元のキーワード"

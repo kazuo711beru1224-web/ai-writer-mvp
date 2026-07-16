@@ -208,6 +208,11 @@ def _ensure_quality_active_page_initialized() -> None:
 
 
 def _go_to_quality_page(page: int) -> None:
+    # ページ移動の直前に、表示中の入力欄をon_change/blur任せにせず明示的に
+    # 正本(saved側)へ同期しておく。サイドバーの画面移動ボタンなど、
+    # textareaのフォーカスが外れた直後にすぐクリックされるケースでも
+    # 入力内容を取りこぼさないための保険。
+    _sync_quality_widgets_to_saved()
     st.session_state[QUALITY_ACTIVE_PAGE_KEY] = page
 
 
@@ -278,6 +283,21 @@ def _resolve_check_guide_texts() -> tuple[str, str, str]:
 def _sync_widget_to_saved(widget_key: str, saved_key: str) -> None:
     """Widget の変更内容を保存用 state に同期する。"""
     st.session_state[saved_key] = str(st.session_state.get(widget_key, "") or "")
+
+
+def _sync_quality_widgets_to_saved() -> None:
+    """
+    _go_to_quality_page()から呼ぶ保険の同期。widgetがまだ一度も描画されて
+    いない（session_stateにキー自体が無い）場合は同期しない＝空文字で
+    正本(saved側)を上書きしない。
+    """
+    widget_key = KEYS["check_text_widget"]
+    if widget_key in st.session_state:
+        _sync_widget_to_saved(widget_key, KEYS["check_text_saved"])
+
+    rewrite_widget_key = KEYS["manual_rewrite_text_widget"]
+    if rewrite_widget_key in st.session_state:
+        _sync_widget_to_saved(rewrite_widget_key, KEYS["manual_rewrite_text_saved"])
 
 
 def _first_nonempty(keys: List[str]) -> str:
