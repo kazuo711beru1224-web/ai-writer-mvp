@@ -1050,8 +1050,9 @@ def test_clear_form_only_empties_form_data_for_expanded_fields():
         assert article_ui._get_form_data_value(field) == ""
 
 
-def test_clear_generated_only_empties_form_data_for_expanded_fields():
-    # 「下書きを消す」でも、拡張したform_dataフィールドが空になることを確認する。
+def test_clear_generated_only_preserves_form_data_input_fields():
+    # 「下書きを消す」は生成結果だけを消す仕様に変更した。
+    # 拡張したform_dataフィールド（入力材料）は消さずに残すことを確認する。
     _reset_session_state()
     st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
     st.session_state[KEYS["main_kw"]] = "テストキーワード"
@@ -1060,8 +1061,8 @@ def test_clear_generated_only_empties_form_data_for_expanded_fields():
 
     article_ui._clear_generated_only()
 
-    for field in _EXPANDED_FORM_DATA_FIELDS:
-        assert article_ui._get_form_data_value(field) == ""
+    assert article_ui._get_form_data_value("main_kw") == "テストキーワード"
+    assert article_ui._get_form_data_value("evidence_url") == "https://example.jp"
 
 
 def test_restore_snapshot_fill_blanks_syncs_restored_values_into_form_data():
@@ -1083,3 +1084,210 @@ def test_restore_snapshot_fill_blanks_syncs_restored_values_into_form_data():
 
     assert st.session_state[KEYS["main_kw"]] == "元のキーワード"
     assert article_ui._get_form_data_value("main_kw") == "元のキーワード"
+
+
+# =========================
+# st.form内4項目（公式情報・確認先ページ）の空文字復元
+# （3/6ページの入力欄が消える不具合の回帰確認）
+# =========================
+#
+# st.form内のwidget（evidence_url/evidence_title/evidence_facts/
+# evidence_points）は、そのフォームが描画されないrunがあると、widget key
+# そのものは残るが値だけStreamlitの実行完了時処理で空文字に戻ることが
+# ある（missingにはならない）。_seed_widget_from_form_data_if_missing()は
+# 「widget keyが無い場合だけ」しか復元しないため、この「キーはあるが
+# 空文字」のケースを救えない。ここでは、この状態を直接再現して検証する。
+
+_FORM_SCOPED_FIELDS = ("evidence_url", "evidence_title", "evidence_facts", "evidence_points")
+
+
+def test_form_scoped_fields_restore_from_form_data_when_widget_key_is_blank_but_present():
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_STYLE
+    st.session_state[article_ui.ARTICLE_FORM_DATA_KEY] = {
+        "evidence_url": "https://example.jp/pension",
+        "evidence_title": "厚生労働省資料",
+        "evidence_facts": "65歳",
+        "evidence_points": "支給停止の条件",
+    }
+    # widget keyは「存在するが空文字」の状態（st.form未描画runでの
+    # Streamlitの強制リセットを再現）。
+    for field in _FORM_SCOPED_FIELDS:
+        st.session_state[KEYS[field]] = ""
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["evidence_url"]] == "https://example.jp/pension"
+    assert st.session_state[KEYS["evidence_title"]] == "厚生労働省資料"
+    assert st.session_state[KEYS["evidence_facts"]] == "65歳"
+    assert st.session_state[KEYS["evidence_points"]] == "支給停止の条件"
+
+
+def test_form_scoped_fields_do_not_revive_when_form_data_is_also_blank():
+    # 利用者がフォームで実際に空欄のまま送信した場合（form_data側も
+    # 空文字で揃っている）は、widget値が空文字のままで正しい。
+    # 古い値の復活が起きないことを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_STYLE
+    st.session_state[article_ui.ARTICLE_FORM_DATA_KEY] = {
+        "evidence_url": "",
+        "evidence_title": "",
+        "evidence_facts": "",
+        "evidence_points": "",
+    }
+    for field in _FORM_SCOPED_FIELDS:
+        st.session_state[KEYS[field]] = ""
+
+    render_article_ui(**_common_kwargs())
+
+    for field in _FORM_SCOPED_FIELDS:
+        assert st.session_state[KEYS[field]] == ""
+
+
+def test_form_scoped_fields_do_not_overwrite_widget_value_that_is_already_non_blank():
+    # widgetにすでに非空値が入っている場合（今まさに編集中）は、
+    # form_dataの別の値で上書きしないことを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_OFFICIAL
+    st.session_state[article_ui.ARTICLE_FORM_DATA_KEY] = {
+        "evidence_url": "https://example.jp/old",
+    }
+    st.session_state[KEYS["evidence_url"]] = "https://example.jp/new-being-typed"
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["evidence_url"]] == "https://example.jp/new-being-typed"
+
+
+def test_form_scoped_fields_still_restore_when_widget_key_is_fully_missing():
+    # 既存の「widget keyが無い場合」の復元（_seed_widget_from_form_data_if_missing）
+    # が、今回の変更で壊れていないことを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_STYLE
+    st.session_state[article_ui.ARTICLE_FORM_DATA_KEY] = {
+        "evidence_url": "https://example.jp/pension",
+        "evidence_title": "厚生労働省資料",
+        "evidence_facts": "65歳",
+        "evidence_points": "支給停止の条件",
+    }
+    # widget keyは一切存在しない状態。
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["evidence_url"]] == "https://example.jp/pension"
+    assert st.session_state[KEYS["evidence_title"]] == "厚生労働省資料"
+    assert st.session_state[KEYS["evidence_facts"]] == "65歳"
+    assert st.session_state[KEYS["evidence_points"]] == "支給停止の条件"
+
+
+# =========================
+# _clear_generated_only：生成結果だけを消し、入力材料は消さない
+# =========================
+
+def test_clear_generated_only_does_not_clear_any_input_material():
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    st.session_state[KEYS["consult_situation"]] = "相談内容"
+    st.session_state[KEYS["consult_question"]] = "知りたいこと"
+    st.session_state[KEYS["main_kw"]] = "メインキーワード"
+    st.session_state[KEYS["sub_kw"]] = "サブキーワード"
+    st.session_state[KEYS["theme"]] = "テーマ"
+    st.session_state[KEYS["memo"]] = "書き方メモ"
+    st.session_state[KEYS["evidence_url"]] = "https://example.jp"
+    st.session_state[KEYS["evidence_title"]] = "資料名"
+    st.session_state[KEYS["evidence_facts"]] = "大事な数字"
+    st.session_state[KEYS["evidence_points"]] = "要点"
+    st.session_state[KEYS["evidence"]] = "根拠まとめ"
+    st.session_state[KEYS["suggest"]] = "検索キーワード"
+    st.session_state[KEYS["tone_reg"]] = "ですます調"
+    render_article_ui(**_common_kwargs())
+
+    article_ui._clear_generated_only()
+
+    assert st.session_state[KEYS["consult_situation"]] == "相談内容"
+    assert st.session_state[KEYS["consult_question"]] == "知りたいこと"
+    assert st.session_state[KEYS["main_kw"]] == "メインキーワード"
+    assert st.session_state[KEYS["sub_kw"]] == "サブキーワード"
+    assert st.session_state[KEYS["theme"]] == "テーマ"
+    assert st.session_state[KEYS["memo"]] == "書き方メモ"
+    assert st.session_state[KEYS["evidence_url"]] == "https://example.jp"
+    assert st.session_state[KEYS["evidence_title"]] == "資料名"
+    assert st.session_state[KEYS["evidence_facts"]] == "大事な数字"
+    assert st.session_state[KEYS["evidence_points"]] == "要点"
+    assert st.session_state[KEYS["evidence"]] == "根拠まとめ"
+    assert st.session_state[KEYS["suggest"]] == "検索キーワード"
+    assert st.session_state[KEYS["tone_reg"]] == "ですます調"
+
+    for field in (
+        "consult_situation", "consult_question", "main_kw", "sub_kw", "theme", "memo",
+        "evidence_url", "evidence_title", "evidence_facts", "evidence_points",
+        "evidence", "suggest", "tone_reg",
+    ):
+        assert article_ui._get_form_data_value(field) != ""
+
+
+def test_clear_generated_only_clears_generated_results():
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_PRECHECK
+    st.session_state[KEYS["last_text"]] = "AIが作った下書き"
+    st.session_state[KEYS["plan_result"]] = "設計図"
+    st.session_state[KEYS["proof_evidence"]] = "証拠として固定した根拠"
+    st.session_state[KEYS["proof_evidence_compact"]] = "証拠として固定した要点"
+    st.session_state[KEYS["proof_suggest"]] = "証拠として固定した検索語"
+    st.session_state[KEYS["proof_memo"]] = "証拠として固定したメモ"
+    render_article_ui(**_common_kwargs())
+    article_ui._set_copy_state_from_text("編集欄の本文")
+
+    article_ui._clear_generated_only()
+
+    assert st.session_state[KEYS["last_text"]] == ""
+    assert st.session_state[KEYS["plan_result"]] == ""
+    assert st.session_state[KEYS["proof_evidence"]] == ""
+    assert st.session_state[KEYS["proof_evidence_compact"]] == ""
+    assert st.session_state[KEYS["proof_suggest"]] == ""
+    assert st.session_state[KEYS["proof_memo"]] == ""
+    assert st.session_state[KEYS["copy_text"]] == ""
+    assert st.session_state[KEYS["copy_last_sig"]] == ""
+    assert article_ui._get_form_data_value("last_text") == ""
+    assert article_ui._get_form_data_value("plan_result") == ""
+    assert article_ui._get_form_data_value("copy_text") == ""
+
+
+# =========================
+# 記事モード上部ナビゲーションボタンの撤去
+# =========================
+
+def test_render_article_ui_does_not_render_top_nav_buttons(monkeypatch):
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_OFFICIAL
+
+    captured_keys = []
+
+    def fake_button(label, **kwargs):
+        captured_keys.append(kwargs.get("key"))
+        return False
+
+    monkeypatch.setattr(st, "button", fake_button)
+
+    render_article_ui(**_common_kwargs())
+
+    assert "btn_article_page_next_top" not in captured_keys
+    assert "btn_article_page_back_top" not in captured_keys
+
+
+def test_render_article_ui_still_renders_bottom_nav_buttons(monkeypatch):
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_OFFICIAL
+
+    captured_keys = []
+
+    def fake_button(label, **kwargs):
+        captured_keys.append(kwargs.get("key"))
+        return False
+
+    monkeypatch.setattr(st, "button", fake_button)
+
+    render_article_ui(**_common_kwargs())
+
+    assert "btn_article_page_next_bottom" in captured_keys
+    assert "btn_article_page_back_bottom" in captured_keys

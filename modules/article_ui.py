@@ -416,6 +416,34 @@ def _sync_form_data_field_from_widget(field: str) -> None:
     _set_form_data_value(field, st.session_state.get(widget_key, ""))
 
 
+# st.form内のwidget（公式情報・確認先ページの4項目）は、そのフォームが
+# 描画されないrunがあると、スクリプト側でsession_state[widget_key]へ
+# 直接値を書き込んでも、Streamlit側の実行完了時処理でその値が空文字へ
+# 戻ってしまう（widget keyそのものが消えるのではなく、キーは残ったまま
+# 値だけ空文字に戻る）。_seed_widget_from_form_data_if_missing()は
+# 「widget keyが無い場合だけ」しか復元しないため、このケースを救えない。
+# フォーム系4項目は必ずform_submit_buttonを通じてまとめて更新されるため
+# （キー入力のたびに同期されるon_change付きwidgetとは異なる）、widget値が
+# 空文字でもform_dataに非空値が残っていれば、それは「フォーム未送信で
+# Streamlitに空文字化された」ケースであり、安全にform_dataの値で復元できる。
+_FORM_SCOPED_BLANK_RESEED_FIELDS: Tuple[str, ...] = (
+    "evidence_url",
+    "evidence_title",
+    "evidence_facts",
+    "evidence_points",
+)
+
+
+def _reseed_form_scoped_widget_from_form_data_if_blank(field: str) -> None:
+    widget_key = KEYS[field]
+    current = st.session_state.get(widget_key, "")
+    if not _is_blank(current):
+        return
+    value = _get_form_data_value(field)
+    if not _is_blank(value):
+        st.session_state[widget_key] = value
+
+
 def _sync_form_data_stage1_from_widgets() -> None:
     """
     次へ/戻る・下書き作成ボタンなど、明示的なタイミングで呼ぶ保険の同期。
@@ -991,31 +1019,23 @@ def _clear_form_only() -> None:
 
 
 def _clear_generated_only() -> None:
+    """
+    「下書きを消す」ボタンの処理。生成結果（下書き本文・設計図・証拠として
+    固定した内容・コピー編集欄）とAI確認結果・メッセージだけを消し、
+    相談内容・キーワード・確認先・書き方の希望などの入力材料は一切消さない。
+    """
     for k in (
         KEYS["last_text"], KEYS["plan_result"],
-        KEYS["consult_situation"], KEYS["consult_question"],
-        KEYS["main_kw"], KEYS["sub_kw"], KEYS["theme"], KEYS["memo"],
-        KEYS["tone_reg"],
-        KEYS["evidence_url"], KEYS["evidence_title"], KEYS["evidence_facts"], KEYS["evidence_points"],
-        KEYS["evidence"], KEYS["suggest"],
         KEYS["proof_evidence"], KEYS["proof_evidence_compact"], KEYS["proof_suggest"], KEYS["proof_memo"],
     ):
         st.session_state[k] = ""
 
-    _clear_article_input_backup()
-    _clear_shadow_state()
-    st.session_state[KEYS["snapshot"]] = {}
     _reset_copy_state()
-    # この関数内のwidget key側で既に空にしているフィールドは、form_data側も
-    # 揃えて空にする（widget keyが後でStreamlitの仕様で消えたときに、
-    # form_dataの古い値で復活しないように）。proof_*はform_data対象外のため含めない。
-    _clear_form_data_fields(
-        "last_text", "plan_result",
-        "consult_situation", "consult_question",
-        "main_kw", "sub_kw", "theme", "memo", "tone_reg",
-        "evidence_url", "evidence_title", "evidence_facts", "evidence_points",
-        "evidence", "suggest",
-    )
+    # last_text/plan_resultはform_data側も揃えて空にする（widget keyが後で
+    # Streamlitの仕様で消えたときに、form_dataの古い値で復活しないように）。
+    # copy_text/copy_last_signは_reset_copy_state()が既に処理済み。
+    # proof_*はform_data対象外のため含めない。入力材料のform_dataは触らない。
+    _clear_form_data_fields("last_text", "plan_result")
     _reset_ui_flags()
 
     st.session_state["api__status_code"] = ""
@@ -1023,7 +1043,7 @@ def _clear_generated_only() -> None:
     st.session_state["api__status_detail"] = ""
     st.session_state["api__last_runtime_error"] = ""
 
-    st.session_state[KEYS["save_message"]] = "下書きと入力内容を消しました。新しい内容で始められます。"
+    st.session_state[KEYS["save_message"]] = "下書きを消しました。入力した内容はそのまま残っています。"
 
 
 def _restore_snapshot_fill_blanks() -> None:
@@ -2909,6 +2929,10 @@ def render_article_ui(
     _ensure_article_form_data()
     for _field in FORM_DATA_WIDGET_SYNC_FIELDS:
         _seed_widget_from_form_data_if_missing(_field)
+    # st.form内の4項目は「widget keyは残るが値だけ空文字に戻る」ケースが
+    # あるため、missing判定だけのseedとは別に、空文字判定で復元する。
+    for _field in _FORM_SCOPED_BLANK_RESEED_FIELDS:
+        _reseed_form_scoped_widget_from_form_data_if_blank(_field)
 
     _ensure_keys_initialized()
     _ensure_article_input_backup()
@@ -2958,7 +2982,10 @@ def render_article_ui(
     # ページを移動しても入力内容は消えない。
     active_page = st.session_state.get(ARTICLE_ACTIVE_PAGE_KEY, ARTICLE_PAGE_BASIC)
     _render_page_indicator()
-    _render_page_nav_buttons(position="top")
+    # 上部の「次へ」「戻る」ボタンは撤去した。入力欄より前に同種のボタンが
+    # 2セット存在する冗長さと、render 1回あたりのボタン/コンポーネント数を
+    # 減らす目的。ページ移動は下部ボタンと左サイドバーの画面移動サポートに
+    # 一本化する。
     st.divider()
 
     if active_page == ARTICLE_PAGE_BASIC:
