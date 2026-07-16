@@ -1087,7 +1087,7 @@ def test_restore_snapshot_fill_blanks_syncs_restored_values_into_form_data():
 
 
 # =========================
-# st.form内4項目（公式情報・確認先ページ）の空文字復元
+# st.form4項目（公式情報・確認先ページ）の空文字復元
 # （3/6ページの入力欄が消える不具合の回帰確認）
 # =========================
 #
@@ -1097,6 +1097,12 @@ def test_restore_snapshot_fill_blanks_syncs_restored_values_into_form_data():
 # ある（missingにはならない）。_seed_widget_from_form_data_if_missing()は
 # 「widget keyが無い場合だけ」しか復元しないため、この「キーはあるが
 # 空文字」のケースを救えない。ここでは、この状態を直接再現して検証する。
+#
+# なお、この「キーは残るが値だけ空文字に戻る」現象はst.form内の項目に
+# 限らないことが判明したため、実際の復元処理（_reseed_blank_widget_from_form_data）
+# はFORM_DATA_WIDGET_SYNC_FIELDS全体に適用されている。他フィールド
+# （suggest/memo/tone_reg/main_kw/sub_kw/theme）向けの同様のテストは、
+# このすぐ後のセクションにまとめている。
 
 _FORM_SCOPED_FIELDS = ("evidence_url", "evidence_title", "evidence_facts", "evidence_points")
 
@@ -1178,6 +1184,100 @@ def test_form_scoped_fields_still_restore_when_widget_key_is_fully_missing():
     assert st.session_state[KEYS["evidence_title"]] == "厚生労働省資料"
     assert st.session_state[KEYS["evidence_facts"]] == "65歳"
     assert st.session_state[KEYS["evidence_points"]] == "支給停止の条件"
+
+
+# =========================
+# blank時reseedの全FORM_DATA_WIDGET_SYNC_FIELDSへの拡張
+# （suggest/memo/tone_reg/main_kw/sub_kw/theme も、widget keyは残るが
+#   値だけ空文字に戻る現象が起きることが本番調査で判明したための回帰確認）
+# =========================
+
+_NON_FORM_BLANK_RESEED_FIELDS = ("suggest", "memo", "tone_reg", "main_kw", "sub_kw", "theme")
+
+
+def test_non_form_fields_restore_from_form_data_when_widget_key_is_blank_but_present():
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_DRAFT
+    st.session_state[article_ui.ARTICLE_FORM_DATA_KEY] = {
+        "suggest": "在職老齢年金, 支給停止",
+        "memo": "わかりやすく",
+        "tone_reg": "ですます調",
+        "main_kw": "在職老齢年金",
+        "sub_kw": "支給停止",
+        "theme": "年金の仕組み",
+    }
+    # widget keyは「存在するが空文字」の状態（描画されないrunでの
+    # Streamlitの強制リセットを再現）。
+    for field in _NON_FORM_BLANK_RESEED_FIELDS:
+        st.session_state[KEYS[field]] = ""
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["suggest"]] == "在職老齢年金, 支給停止"
+    assert st.session_state[KEYS["memo"]] == "わかりやすく"
+    assert st.session_state[KEYS["tone_reg"]] == "ですます調"
+    assert st.session_state[KEYS["main_kw"]] == "在職老齢年金"
+    assert st.session_state[KEYS["sub_kw"]] == "支給停止"
+    assert st.session_state[KEYS["theme"]] == "年金の仕組み"
+
+
+def test_non_form_fields_do_not_revive_when_form_data_is_also_blank():
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_DRAFT
+    st.session_state[article_ui.ARTICLE_FORM_DATA_KEY] = {
+        field: "" for field in _NON_FORM_BLANK_RESEED_FIELDS
+    }
+    for field in _NON_FORM_BLANK_RESEED_FIELDS:
+        st.session_state[KEYS[field]] = ""
+
+    render_article_ui(**_common_kwargs())
+
+    for field in _NON_FORM_BLANK_RESEED_FIELDS:
+        assert st.session_state[KEYS[field]] == ""
+
+
+def test_non_form_fields_do_not_overwrite_widget_value_that_is_already_non_blank():
+    # widgetにすでに非空値が入っている場合（今まさに編集中）は、
+    # form_dataの別の値で上書きしないことを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_STYLE
+    st.session_state[article_ui.ARTICLE_FORM_DATA_KEY] = {
+        "memo": "古いメモ",
+    }
+    st.session_state[KEYS["memo"]] = "いま編集中のメモ"
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["memo"]] == "いま編集中のメモ"
+
+
+def test_non_form_fields_still_restore_when_widget_key_is_fully_missing():
+    # 既存の「widget keyが無い場合」の復元が、今回の拡張後も壊れていないことを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_DRAFT
+    st.session_state[article_ui.ARTICLE_FORM_DATA_KEY] = {
+        "suggest": "在職老齢年金, 支給停止",
+        "memo": "わかりやすく",
+        "tone_reg": "ですます調",
+        "main_kw": "在職老齢年金",
+        "sub_kw": "支給停止",
+        "theme": "年金の仕組み",
+    }
+    # widget keyは一切存在しない状態。
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["suggest"]] == "在職老齢年金, 支給停止"
+    assert st.session_state[KEYS["memo"]] == "わかりやすく"
+    assert st.session_state[KEYS["tone_reg"]] == "ですます調"
+    assert st.session_state[KEYS["main_kw"]] == "在職老齢年金"
+    assert st.session_state[KEYS["sub_kw"]] == "支給停止"
+    assert st.session_state[KEYS["theme"]] == "年金の仕組み"
+
+
+def test_blank_reseed_never_targets_api_key():
+    # ベル憲法：APIキーはblank時reseedの対象に絶対に含めない。
+    assert "openai_api_key" not in article_ui.FORM_DATA_WIDGET_SYNC_FIELDS
 
 
 # =========================
@@ -1291,3 +1391,40 @@ def test_render_article_ui_still_renders_bottom_nav_buttons(monkeypatch):
 
     assert "btn_article_page_next_bottom" in captured_keys
     assert "btn_article_page_back_bottom" in captured_keys
+
+
+# =========================
+# 5/6：下書き生成のバリデーション失敗時も詰まらないことの回帰確認
+# （st.stop()がrender_article_ui末尾の下部ナビゲーションの描画まで
+#   止めてしまい、利用者がページ移動できなくなっていた不具合の修正確認）
+# =========================
+
+def test_page5_validation_failure_still_shows_bottom_back_button(monkeypatch):
+    # consult_situation/consult_questionが空のまま「下書きを作る」を押すと
+    # バリデーションに失敗するが、その場合でも下部の「戻る」ボタンが
+    # 必ず描画されることを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_DRAFT
+
+    captured_keys = []
+
+    def fake_button(label, **kwargs):
+        captured_keys.append(kwargs.get("key"))
+        return label == "✨ 下書きを作る"
+
+    monkeypatch.setattr(st, "button", fake_button)
+
+    render_article_ui(**_common_kwargs())
+
+    assert "btn_article_page_back_bottom" in captured_keys
+
+
+def test_page5_validation_failure_does_not_generate_draft(monkeypatch):
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_DRAFT
+
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: label == "✨ 下書きを作る")
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state.get(KEYS["last_text"], "") == ""

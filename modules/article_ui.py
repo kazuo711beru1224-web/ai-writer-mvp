@@ -416,25 +416,21 @@ def _sync_form_data_field_from_widget(field: str) -> None:
     _set_form_data_value(field, st.session_state.get(widget_key, ""))
 
 
-# st.form内のwidget（公式情報・確認先ページの4項目）は、そのフォームが
-# 描画されないrunがあると、スクリプト側でsession_state[widget_key]へ
-# 直接値を書き込んでも、Streamlit側の実行完了時処理でその値が空文字へ
-# 戻ってしまう（widget keyそのものが消えるのではなく、キーは残ったまま
-# 値だけ空文字に戻る）。_seed_widget_from_form_data_if_missing()は
-# 「widget keyが無い場合だけ」しか復元しないため、このケースを救えない。
-# フォーム系4項目は必ずform_submit_buttonを通じてまとめて更新されるため
-# （キー入力のたびに同期されるon_change付きwidgetとは異なる）、widget値が
-# 空文字でもform_dataに非空値が残っていれば、それは「フォーム未送信で
-# Streamlitに空文字化された」ケースであり、安全にform_dataの値で復元できる。
-_FORM_SCOPED_BLANK_RESEED_FIELDS: Tuple[str, ...] = (
-    "evidence_url",
-    "evidence_title",
-    "evidence_facts",
-    "evidence_points",
-)
-
-
-def _reseed_form_scoped_widget_from_form_data_if_blank(field: str) -> None:
+# st.formの4項目（evidence_url/evidence_title/evidence_facts/
+# evidence_points）に限らず、on_changeを持たないwidget（suggest/memo/
+# tone_reg/main_kw/sub_kw/theme）も同様に、そのwidgetが描画されないrunが
+# あると、スクリプト側でsession_state[widget_key]へ直接値を書き込んでも、
+# Streamlit側の実行完了時処理でその値が空文字へ戻ることがある
+# （widget keyそのものが消えるのではなく、キーは残ったまま値だけ空文字に
+# 戻る）。_seed_widget_from_form_data_if_missing()は「widget keyが無い
+# 場合だけ」しか復元しないため、このケースを救えない。
+#
+# FORM_DATA_WIDGET_SYNC_FIELDS全体に対して、以下のルールで安全に復元する。
+# - widget値が空文字で、form_dataに非空値がある → form_dataの値で復元する
+# - widget値が非空（編集中の値） → 上書きしない
+# - form_dataも空文字（利用者が「入力欄を空にする」等で明示的に空にした
+#   ケース） → 復元しない（空のまま）
+def _reseed_blank_widget_from_form_data(field: str) -> None:
     widget_key = KEYS[field]
     current = st.session_state.get(widget_key, "")
     if not _is_blank(current):
@@ -949,11 +945,12 @@ def _restore_blank_generation_inputs_from_backup_or_shadow() -> None:
 
 def _restore_stale_inputs_on_page_change() -> None:
     """
-    _restore_shadow_state_to_blanks() / _restore_article_inputs_from_backup() は
-    どちらも「今のWidget値が空なら、退避してあった値で埋める」処理のため、
-    同じページ内の再描画のたびに毎回呼び出すと、利用者が今まさに空にした
-    欄へ古い値を書き戻してしまう（消したのに戻る）。
-    そのため、実際にページ（active_page）が切り替わった直後だけ呼び出す。
+    _restore_shadow_state_to_blanks() / _restore_article_inputs_from_backup() /
+    _reseed_blank_widget_from_form_data() はどれも「今のWidget値が空なら、
+    退避してあった値で埋める」処理のため、同じページ内の再描画のたびに毎回
+    呼び出すと、利用者が今まさに空にした欄へ古い値を書き戻してしまう
+    （消したのに戻る）。そのため、実際にページ（active_page）が切り替わった
+    直後だけ呼び出す。
     """
     current_page = st.session_state.get(ARTICLE_ACTIVE_PAGE_KEY, ARTICLE_PAGE_BASIC)
     last_restored_page = st.session_state.get(ARTICLE_SHADOW_RESTORED_PAGE_KEY)
@@ -961,6 +958,10 @@ def _restore_stale_inputs_on_page_change() -> None:
         return
     _restore_article_inputs_from_backup()
     _restore_shadow_state_to_blanks()
+    # 「widget keyは残るが値だけ空文字に戻る」現象（st.form内外を問わず
+    # 起こりうる）の復元も、ページが切り替わった直後だけ行う。
+    for _field in FORM_DATA_WIDGET_SYNC_FIELDS:
+        _reseed_blank_widget_from_form_data(_field)
     st.session_state[ARTICLE_SHADOW_RESTORED_PAGE_KEY] = current_page
 
 
@@ -2929,13 +2930,14 @@ def render_article_ui(
     _ensure_article_form_data()
     for _field in FORM_DATA_WIDGET_SYNC_FIELDS:
         _seed_widget_from_form_data_if_missing(_field)
-    # st.form内の4項目は「widget keyは残るが値だけ空文字に戻る」ケースが
-    # あるため、missing判定だけのseedとは別に、空文字判定で復元する。
-    for _field in _FORM_SCOPED_BLANK_RESEED_FIELDS:
-        _reseed_form_scoped_widget_from_form_data_if_blank(_field)
 
     _ensure_keys_initialized()
     _ensure_article_input_backup()
+    # 「widget keyは残るが値だけ空文字に戻る」ケース（st.form内外を問わず
+    # 起こりうる）の空文字判定reseedは、_restore_stale_inputs_on_page_change()
+    # 内で、ページが実際に切り替わった直後だけ行う（同じページ内の
+    # 再描画のたびに毎回行うと、利用者が今まさに空にした欄へ古い値を
+    # 書き戻してしまうため）。
     _restore_stale_inputs_on_page_change()
 
     # 記事モードの先頭アンカー。文章チェックモードのページ内リンク
@@ -3049,7 +3051,11 @@ def _render_page_5_draft(
 
         if not situation or not question:
             st.warning("『今の状況』と『知りたいこと』を入れてください。")
-            st.stop()
+            # st.stop()はスクリプト全体を止め、render_article_ui末尾の
+            # 下部ナビゲーション（戻る/次へ）まで止めてしまい、利用者が
+            # ページ移動できず詰まる原因になっていた。このページの描画
+            # だけを終えるreturnにし、下部ナビゲーションは必ず描画させる。
+            return
 
         _sync_evidence_text_from_parts()
 
@@ -3057,13 +3063,13 @@ def _render_page_5_draft(
         sensitive_check = _detect_sensitive_data(sensitive_text)
         if sensitive_check["risky"]:
             _render_sensitive_block_message(sensitive_check)
-            st.stop()
+            return
 
         pre_errors = _preflight_block_generate_if_needed()
         if pre_errors:
             for message in pre_errors:
                 st.error(message)
-            st.stop()
+            return
 
         try:
             with st.spinner("構成を考えています..."):
