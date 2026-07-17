@@ -651,13 +651,15 @@ def test_get_current_consult_values_returns_blank_after_explicit_clear():
 
 def test_restore_blank_generation_inputs_from_backup_or_shadow_restores_widget_keys():
     # 下書き作成直前の書き戻しは、consult_situation/consult_question以外に
-    # suggest/evidence_url/evidence_title/tone_regも対象にすることを確認する。
+    # suggest/tone_regも対象にすることを確認する。
+    # evidence_url/evidence_title/evidence_facts/evidence_pointsは
+    # backup/shadowの復元競合を避けるため対象外にしたので、この経路では
+    # 検証しない（form_data経由の復元はtest_restore_blank_generation_inputs_
+    # fills_all_evidence_fields_from_form_dataで別途検証する）。
     _reset_session_state()
     st.session_state[KEYS["consult_situation"]] = "テスト用の状況"
     st.session_state[KEYS["consult_question"]] = "テスト用の質問"
     st.session_state[KEYS["suggest"]] = "keyword A"
-    st.session_state[KEYS["evidence_url"]] = "https://example.com"
-    st.session_state[KEYS["evidence_title"]] = "資料名"
     st.session_state[KEYS["tone_reg"]] = "です・ます調"
     article_ui._backup_article_inputs()
     article_ui._backup_shadow_state()
@@ -666,8 +668,6 @@ def test_restore_blank_generation_inputs_from_backup_or_shadow_restores_widget_k
         KEYS["consult_situation"],
         KEYS["consult_question"],
         KEYS["suggest"],
-        KEYS["evidence_url"],
-        KEYS["evidence_title"],
         KEYS["tone_reg"],
     ):
         del st.session_state[key]
@@ -677,8 +677,6 @@ def test_restore_blank_generation_inputs_from_backup_or_shadow_restores_widget_k
     assert st.session_state[KEYS["consult_situation"]] == "テスト用の状況"
     assert st.session_state[KEYS["consult_question"]] == "テスト用の質問"
     assert st.session_state[KEYS["suggest"]] == "keyword A"
-    assert st.session_state[KEYS["evidence_url"]] == "https://example.com"
-    assert st.session_state[KEYS["evidence_title"]] == "資料名"
     assert st.session_state[KEYS["tone_reg"]] == "です・ます調"
 
 
@@ -1268,6 +1266,153 @@ def test_effective_evidence_text_works_without_pressing_apply_button():
     assert "未反映の資料名" in text
     assert "未反映の数字" in text
     assert "未反映の要点" in text
+
+
+# =========================
+# 3/6の4項目をshadow/input_backupの復元競合から除外
+# （backup→shadow→form_dataという復元順序では、backup/shadowが
+#   form_dataより古い値を持っている場合にその古い値が先に空欄を埋めて
+#   しまい、正本のform_dataが負けてしまう競合があった。evidence_url/
+#   evidence_title/evidence_facts/evidence_pointsはこの4系統をやめ、
+#   article__form_data一本にする）
+# =========================
+
+_EVIDENCE_SPLIT_FIELDS = ("evidence_url", "evidence_title", "evidence_facts", "evidence_points")
+
+
+def test_evidence_fields_are_excluded_from_shadow_keys():
+    for field in _EVIDENCE_SPLIT_FIELDS:
+        assert KEYS[field] not in article_ui.SHADOW_KEYS
+
+
+def test_evidence_fields_are_excluded_from_input_backup_keys():
+    for field in _EVIDENCE_SPLIT_FIELDS:
+        assert KEYS[field] not in article_ui._ARTICLE_INPUT_BACKUP_KEYS
+
+
+def test_form_data_wins_over_stale_shadow_and_backup_for_evidence_fields():
+    # 今回発見した競合の回帰確認。backup/shadowに古い値が残っていても
+    # （除外前のセッションの残骸を想定）、evidence 4項目はもう
+    # backup/shadow経由では復元されず、article__form_dataの新しい値だけが
+    # 使われることを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_OFFICIAL
+    st.session_state[article_ui.ARTICLE_FORM_DATA_KEY] = {
+        "evidence_url": "https://example.jp/new",
+        "evidence_title": "新資料名",
+        "evidence_facts": "新数字",
+        "evidence_points": "新要点",
+    }
+    st.session_state["article__input_backup"] = {
+        KEYS["evidence_url"]: "https://example.jp/old",
+        KEYS["evidence_title"]: "旧資料名",
+        KEYS["evidence_facts"]: "旧数字",
+        KEYS["evidence_points"]: "旧要点",
+    }
+    st.session_state["article_shadow__evidence_url"] = "https://example.jp/old"
+    st.session_state["article_shadow__evidence_title"] = "旧資料名"
+    st.session_state["article_shadow__evidence_facts"] = "旧数字"
+    st.session_state["article_shadow__evidence_points"] = "旧要点"
+    # widget keyはStreamlitの仕様で消えた状態を再現。
+    for field in _EVIDENCE_SPLIT_FIELDS:
+        if KEYS[field] in st.session_state:
+            del st.session_state[KEYS[field]]
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["evidence_url"]] == "https://example.jp/new"
+    assert st.session_state[KEYS["evidence_title"]] == "新資料名"
+    assert st.session_state[KEYS["evidence_facts"]] == "新数字"
+    assert st.session_state[KEYS["evidence_points"]] == "新要点"
+
+
+def test_evidence_fields_survive_multi_hop_page_jump_like_sidebar():
+    # 3/6 -> 1/6 -> 3/6（サイドバー画面移動サポート相当の複数ページ移動）
+    # を経ても4項目が残ることを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_OFFICIAL
+    render_article_ui(**_common_kwargs())
+
+    st.session_state[KEYS["evidence_url"]] = "https://example.jp/hop"
+    st.session_state[KEYS["evidence_title"]] = "資料hop"
+    st.session_state[KEYS["evidence_facts"]] = "数字hop"
+    st.session_state[KEYS["evidence_points"]] = "要点hop"
+    for field in _EVIDENCE_SPLIT_FIELDS:
+        article_ui._sync_form_data_field_from_widget(field)
+
+    # サイドバーの「1. 基本入力へ」相当（app._go_to_article_page）。
+    app._go_to_article_page(ARTICLE_PAGE_BASIC)
+    for field in _EVIDENCE_SPLIT_FIELDS:
+        if KEYS[field] in st.session_state:
+            del st.session_state[KEYS[field]]
+    render_article_ui(**_common_kwargs())
+
+    # サイドバーの「3. 公式情報へ」相当で戻る。
+    app._go_to_article_page(ARTICLE_PAGE_OFFICIAL)
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["evidence_url"]] == "https://example.jp/hop"
+    assert st.session_state[KEYS["evidence_title"]] == "資料hop"
+    assert st.session_state[KEYS["evidence_facts"]] == "数字hop"
+    assert st.session_state[KEYS["evidence_points"]] == "要点hop"
+
+
+def test_evidence_fields_survive_draft_and_precheck_round_trip():
+    # 3/6 -> 5/6(下書き作成) -> 6/6 -> 3/6という移動を経ても4項目が
+    # 残ることを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_OFFICIAL
+    render_article_ui(**_common_kwargs())
+
+    st.session_state[KEYS["evidence_url"]] = "https://example.jp/draft"
+    st.session_state[KEYS["evidence_title"]] = "資料draft"
+    st.session_state[KEYS["evidence_facts"]] = "数字draft"
+    st.session_state[KEYS["evidence_points"]] = "要点draft"
+    for field in _EVIDENCE_SPLIT_FIELDS:
+        article_ui._sync_form_data_field_from_widget(field)
+
+    article_ui._go_to_page(ARTICLE_PAGE_DRAFT)
+    for field in _EVIDENCE_SPLIT_FIELDS:
+        if KEYS[field] in st.session_state:
+            del st.session_state[KEYS[field]]
+    render_article_ui(**_common_kwargs())
+
+    article_ui._go_to_page(ARTICLE_PAGE_PRECHECK)
+    render_article_ui(**_common_kwargs())
+
+    article_ui._go_to_page(ARTICLE_PAGE_OFFICIAL)
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["evidence_url"]] == "https://example.jp/draft"
+    assert st.session_state[KEYS["evidence_title"]] == "資料draft"
+    assert st.session_state[KEYS["evidence_facts"]] == "数字draft"
+    assert st.session_state[KEYS["evidence_points"]] == "要点draft"
+
+
+def test_generation_restore_keys_include_all_four_evidence_fields():
+    # evidence_url/evidence_titleだけでなくevidence_facts/evidence_pointsも
+    # 生成直前の書き戻し対象に揃えたことを確認する。
+    for field in _EVIDENCE_SPLIT_FIELDS:
+        assert KEYS[field] in article_ui._GENERATION_RESTORE_KEYS
+
+
+def test_restore_blank_generation_inputs_fills_all_evidence_fields_from_form_data():
+    _reset_session_state()
+    st.session_state[article_ui.ARTICLE_FORM_DATA_KEY] = {
+        "evidence_url": "https://example.jp/gen",
+        "evidence_title": "資料gen",
+        "evidence_facts": "数字gen",
+        "evidence_points": "要点gen",
+    }
+    for field in _EVIDENCE_SPLIT_FIELDS:
+        st.session_state[KEYS[field]] = ""
+
+    article_ui._restore_blank_generation_inputs_from_backup_or_shadow()
+
+    assert st.session_state[KEYS["evidence_url"]] == "https://example.jp/gen"
+    assert st.session_state[KEYS["evidence_title"]] == "資料gen"
+    assert st.session_state[KEYS["evidence_facts"]] == "数字gen"
+    assert st.session_state[KEYS["evidence_points"]] == "要点gen"
 
 
 # =========================

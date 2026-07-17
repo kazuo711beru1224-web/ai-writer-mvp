@@ -83,14 +83,16 @@ PERSIST_KEYS: Set[str] = {
 # 消えたように見えないよう退避しておく、画面表示専用のシャドウState。
 # ファイルへの保存対象（PERSIST_KEYS）にも自動保存ダンプにも含めない、
 # セッション内だけの安全網。
+# evidence_url/evidence_title/evidence_facts/evidence_pointsは対象外。
+# backup/shadowがarticle__form_dataより古い値を持っていると、復元順序
+# （backup→shadow→form_data、いずれも「今の値が空のときだけ埋める」）
+# の都合でform_dataより古い値が先に埋まって勝ってしまう競合があったため、
+# この4項目はform_data（_seed_widget_from_form_data_if_missing /
+# _reseed_blank_widget_from_form_data / on_change）だけを正本にする。
 SHADOW_KEYS: Dict[str, str] = {
     KEYS["consult_situation"]: "article_shadow__consult_situation",
     KEYS["consult_question"]: "article_shadow__consult_question",
     KEYS["suggest"]: "article_shadow__search_keyword",
-    KEYS["evidence_url"]: "article_shadow__evidence_url",
-    KEYS["evidence_title"]: "article_shadow__evidence_title",
-    KEYS["evidence_facts"]: "article_shadow__evidence_facts",
-    KEYS["evidence_points"]: "article_shadow__evidence_points",
     KEYS["tone_reg"]: "article_shadow__tone_reg",
     KEYS["main_kw"]: "article_shadow__main_kw",
     KEYS["sub_kw"]: "article_shadow__sub_kw",
@@ -778,6 +780,8 @@ def _ensure_article_input_backup() -> None:
         st.session_state["article__input_backup"] = {}
 
 
+# evidence_url/evidence_title/evidence_facts/evidence_pointsは対象外
+# （SHADOW_KEYSと同じ理由。article__form_dataだけを正本にする）。
 _ARTICLE_INPUT_BACKUP_KEYS: Tuple[str, ...] = (
     KEYS["main_kw"],
     KEYS["sub_kw"],
@@ -785,10 +789,6 @@ _ARTICLE_INPUT_BACKUP_KEYS: Tuple[str, ...] = (
     KEYS["memo"],
     KEYS["consult_situation"],
     KEYS["consult_question"],
-    KEYS["evidence_url"],
-    KEYS["evidence_title"],
-    KEYS["evidence_facts"],
-    KEYS["evidence_points"],
     KEYS["evidence"],
     KEYS["suggest"],
     KEYS["tone_reg"],
@@ -819,11 +819,12 @@ def _restore_article_inputs_from_backup() -> None:
     if not isinstance(backup, dict):
         return
 
+    # evidence_url/evidence_title/evidence_facts/evidence_pointsは対象外
+    # （_ARTICLE_INPUT_BACKUP_KEYSと同じ理由。article__form_dataだけを正本にする）。
     for k in (
         KEYS["main_kw"], KEYS["sub_kw"], KEYS["theme"], KEYS["memo"],
         KEYS["tone_reg"],
         KEYS["consult_situation"], KEYS["consult_question"],
-        KEYS["evidence_url"], KEYS["evidence_title"], KEYS["evidence_facts"], KEYS["evidence_points"],
         KEYS["evidence"], KEYS["suggest"],
     ):
         current = st.session_state.get(k, None)
@@ -911,14 +912,20 @@ def _get_current_consult_values() -> Tuple[str, str]:
     )
 
 
-# 下書き作成の直前だけ、widget値が空でbackup/shadowに非空値がある場合に
-# 限って書き戻す対象のキー（_restore_blank_generation_inputs_from_backup_or_shadow参照）。
+# 下書き作成の直前だけ、widget値が空でbackup/shadow/form_dataに非空値がある
+# 場合に限って書き戻す対象のキー（_restore_blank_generation_inputs_from_backup_or_shadow参照）。
+# _get_effective_input_evidence_text()はevidence_url/title/facts/pointsの
+# 4項目すべてをsession_stateから直接読むため、生成直前の書き戻しも4項目を
+# 揃える（evidence_url/titleだけだと、facts/pointsが空文字に戻っていた
+# 場合に確認先の要点が生成に反映されない取りこぼしが起きるため）。
 _GENERATION_RESTORE_KEYS: Tuple[str, ...] = (
     KEYS["consult_situation"],
     KEYS["consult_question"],
     KEYS["suggest"],
     KEYS["evidence_url"],
     KEYS["evidence_title"],
+    KEYS["evidence_facts"],
+    KEYS["evidence_points"],
     KEYS["tone_reg"],
 )
 
