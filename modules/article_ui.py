@@ -2734,9 +2734,12 @@ def _render_page_2_keyword_and_detail_entry() -> None:
         "検索キーワード、サジェストキーワード、関連キーワードなど、"
         "読者が検索しそうな言葉を入れてください。2〜5個くらいが目安です。空でも進められます。"
     )
+    _seed_widget_from_form_data_if_missing("suggest")
     st.text_input(
         "例：在職老齢年金, 支給停止, 65万円基準",
         key=KEYS["suggest"],
+        on_change=_sync_form_data_field_from_widget,
+        args=("suggest",),
     )
 
     if _is_high_risk_topic():
@@ -2852,12 +2855,22 @@ def _render_page_4_writing_style() -> None:
         st.caption("空でも進められます。必要なら補足してください。")
     elif show_assist_hint:
         st.caption("入力内容から自動補助しました。必要なら自由に直してください。")
-    st.text_area("読者や書き方のメモ", height=110, key=KEYS["memo"])
+    _seed_widget_from_form_data_if_missing("memo")
+    st.text_area(
+        "読者や書き方のメモ",
+        height=110,
+        key=KEYS["memo"],
+        on_change=_sync_form_data_field_from_widget,
+        args=("memo",),
+    )
 
+    _seed_widget_from_form_data_if_missing("tone_reg")
     st.text_area(
         "トンマナ・レギュレーション（任意）",
         height=90,
         key=KEYS["tone_reg"],
+        on_change=_sync_form_data_field_from_widget,
+        args=("tone_reg",),
     )
     st.caption("トンマナ・レギュレーション：文体、禁止表現、言い回しのルールを書いてください。空欄なら標準設定で作成します。")
 
@@ -2868,17 +2881,35 @@ def _render_page_4_writing_style() -> None:
         main_kw = str(st.session_state.get(KEYS["main_kw"], "") or "").strip()
         if not main_kw:
             st.caption(f"候補：{_guess_main_kw_from_consult(str(st.session_state.get(KEYS['consult_situation'], '') or ''), str(st.session_state.get(KEYS['consult_question'], '') or ''))}")
-        st.text_input("この記事で中心にする言葉", key=KEYS["main_kw"])
+        _seed_widget_from_form_data_if_missing("main_kw")
+        st.text_input(
+            "この記事で中心にする言葉",
+            key=KEYS["main_kw"],
+            on_change=_sync_form_data_field_from_widget,
+            args=("main_kw",),
+        )
 
         sub_kw = str(st.session_state.get(KEYS["sub_kw"], "") or "").strip()
         if not sub_kw:
             st.caption("候補：検索キーワードの内容や相談文から自動で考えます。必要なら入れてください。")
-        st.text_input("一緒に入れたい関連語", key=KEYS["sub_kw"])
+        _seed_widget_from_form_data_if_missing("sub_kw")
+        st.text_input(
+            "一緒に入れたい関連語",
+            key=KEYS["sub_kw"],
+            on_change=_sync_form_data_field_from_widget,
+            args=("sub_kw",),
+        )
 
         theme = str(st.session_state.get(KEYS["theme"], "") or "").strip()
         if not theme:
             st.caption(f"候補：{_guess_theme_from_consult(str(st.session_state.get(KEYS['consult_situation'], '') or ''), str(st.session_state.get(KEYS['consult_question'], '') or ''))}")
-        st.text_input("記事の仮タイトル・方向性", key=KEYS["theme"])
+        _seed_widget_from_form_data_if_missing("theme")
+        st.text_input(
+            "記事の仮タイトル・方向性",
+            key=KEYS["theme"],
+            on_change=_sync_form_data_field_from_widget,
+            args=("theme",),
+        )
 
 
 def _render_pre_generate_input_summary() -> None:

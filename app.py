@@ -15,12 +15,6 @@ import streamlit.components.v1 as components
 # =========================
 from modules.article_ui import (
     ARTICLE_FORM_DATA_KEY,
-    ARTICLE_PAGE_BASIC,
-    ARTICLE_PAGE_KEYWORD,
-    ARTICLE_PAGE_OFFICIAL,
-    ARTICLE_PAGE_STYLE,
-    ARTICLE_PAGE_DRAFT,
-    ARTICLE_PAGE_PRECHECK,
     render_article_ui,
     _go_to_page as _go_to_article_page,
     _backup_shadow_state as _backup_article_shadow_state,
@@ -914,32 +908,15 @@ def _render_sidebar() -> str:
 
         if current_menu == MENU_ARTICLE:
             st.divider()
-            st.markdown("### \U0001f9ed \u753b\u9762\u79fb\u52d5\u30b5\u30dd\u30fc\u30c8")
-            st.caption("\u8a18\u4e8b\u30e2\u30fc\u30c9\u306f1\uff5e6\u306e\u30da\u30fc\u30b8\u306b\u5206\u304b\u308c\u3066\u3044\u307e\u3059\u3002")
-            # \u4ee5\u524d\u306ehref\u30a2\u30f3\u30ab\u30fc\u65b9\u5f0f\u306f\u3001\u30af\u30ea\u30c3\u30af\u6642\u306eJS\u304c\u5931\u6557\u3059\u308b\u3068
-            # \u30d6\u30e9\u30a6\u30b6\u306e\u6a19\u6e96\u30a2\u30f3\u30ab\u30fc\u9077\u79fb\u304c\u767a\u751f\u3057\u3066URL hash\u304c\u6b8b\u3063\u3066\u3057\u307e\u3063\u305f
-            # \uff08\u672c\u756a\u3067\u5b9f\u969b\u306b\u767a\u751f\u3057\u305f\uff09\u3002st.button\u306fhref/hash\u3092\u4e00\u5207\u4f7f\u308f\u305a\u3001
-            # \u62bc\u3055\u308c\u305f\u3089session_state\u7d4c\u7531\u3067\u79fb\u52d5\u5148\u30da\u30fc\u30b8\u756a\u53f7\u3092\u6e21\u3059\u3060\u3051\u306a\u306e\u3067\u3001
-            # JS\u306e\u6210\u5426\u306b\u95a2\u4fc2\u306a\u304fhash\u306f\u4e00\u5207\u767a\u751f\u3057\u306a\u3044\u3002
-            #
-            # 6\u30da\u30fc\u30b8UI\u5316\u306b\u4f34\u3044\u3001\u79fb\u52d5\u5148\u30da\u30fc\u30b8\u3092\u8868\u793a\u3059\u308c\u3070\u5341\u5206\u306a\u305f\u3081\u3001
-            # scrollIntoView\u306f\u4f7f\u308f\u305a\u3001active_page\u3092\u5207\u308a\u66ff\u3048\u308b\u3060\u3051\u306b\u3059\u308b\u3002
-            for target_page, label in (
-                (ARTICLE_PAGE_BASIC, "1. \u57fa\u672c\u5165\u529b\u3078"),
-                (ARTICLE_PAGE_KEYWORD, "2. \u30ad\u30fc\u30ef\u30fc\u30c9\u3078"),
-                (ARTICLE_PAGE_OFFICIAL, "3. \u516c\u5f0f\u60c5\u5831\u3078"),
-                (ARTICLE_PAGE_STYLE, "4. \u66f8\u304d\u65b9\u306e\u5e0c\u671b\u3078"),
-                (ARTICLE_PAGE_DRAFT, "5. \u4e0b\u66f8\u304d\u4f5c\u6210\u3078"),
-                (ARTICLE_PAGE_PRECHECK, "6. \u4e0b\u66f8\u304d\u306e\u78ba\u8a8d\u3078"),
-            ):
-                if st.button(
-                    label,
-                    key=f"article_nav__page_{target_page}",
-                    use_container_width=True,
-                ):
-                    # ページ下部の「次へ」「戻る」と同じ _go_to_page() を通すことで、
-                    # 切替前の _backup_shadow_state() などの安全処理を一本化する。
-                    _go_to_article_page(target_page)
+            st.markdown("### 🧭 画面移動サポート")
+            # 記事モードは入力欄が多く、状態管理も複雑なため、サイドバーからの
+            # 複数ページジャンプは入力欄が消えるリスクがあった（本番で複数回
+            # 報告）。ページジャンプ用ボタンは撤去し、本文下部の「次へ」
+            # 「戻る」（_go_to_page、1段階移動のみ）に一本化する。
+            st.caption(
+                "入力内容を守るため、記事モード内の移動は画面下の"
+                "「次へ」「戻る」ボタンを使ってください。"
+            )
 
 
         if current_menu == MENU_CHECK:

@@ -1416,6 +1416,44 @@ def test_restore_blank_generation_inputs_fills_all_evidence_fields_from_form_dat
 
 
 # =========================
+# 2/6・4/6へのon_change同期追加
+# （記事モードのサイドバー青ボタン撤去にあわせ、下部「次へ」「戻る」で
+#   進む際の安全性を上げるため、1/6・3/6と同じon_change即時同期を
+#   2/6のsuggest、4/6のmemo/tone_reg/main_kw/sub_kw/themeにも揃えた）
+# =========================
+
+_PAGE2_ON_CHANGE_FIELDS = ("suggest",)
+_PAGE4_ON_CHANGE_FIELDS = ("memo", "tone_reg", "main_kw", "sub_kw", "theme")
+
+
+def test_page2_suggest_field_has_on_change_sync():
+    source = inspect.getsource(article_ui._render_page_2_keyword_and_detail_entry)
+    for field in _PAGE2_ON_CHANGE_FIELDS:
+        assert f'args=("{field}",)' in source
+    assert source.count("on_change=_sync_form_data_field_from_widget") == len(_PAGE2_ON_CHANGE_FIELDS)
+
+
+def test_page4_fields_have_on_change_sync():
+    source = inspect.getsource(article_ui._render_page_4_writing_style)
+    for field in _PAGE4_ON_CHANGE_FIELDS:
+        assert f'args=("{field}",)' in source
+    assert source.count("on_change=_sync_form_data_field_from_widget") == len(_PAGE4_ON_CHANGE_FIELDS)
+
+
+def test_page2_and_page4_fields_persist_to_form_data_without_page_transition():
+    # on_change相当（_sync_form_data_field_from_widget）を模擬した直後、
+    # ページ移動を挟まなくてもarticle__form_dataに値が反映されることを
+    # 確認する（1/6・3/6と同じ即時同期方式になったことの回帰確認）。
+    _reset_session_state()
+    for field in _PAGE2_ON_CHANGE_FIELDS + _PAGE4_ON_CHANGE_FIELDS:
+        st.session_state[KEYS[field]] = f"value-{field}"
+        article_ui._sync_form_data_field_from_widget(field)
+
+    for field in _PAGE2_ON_CHANGE_FIELDS + _PAGE4_ON_CHANGE_FIELDS:
+        assert article_ui._get_form_data_value(field) == f"value-{field}"
+
+
+# =========================
 # blank時reseedの全FORM_DATA_WIDGET_SYNC_FIELDSへの拡張
 # （suggest/memo/tone_reg/main_kw/sub_kw/theme も、widget keyは残るが
 #   値だけ空文字に戻る現象が起きることが本番調査で判明したための回帰確認）

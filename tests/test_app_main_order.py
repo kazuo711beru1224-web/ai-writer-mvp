@@ -50,18 +50,27 @@ def test_article_mode_sidebar_navigation_has_no_url_hash_links():
     assert "data-ai-scroll-target" not in source
 
 
-def test_article_mode_sidebar_navigation_uses_buttons_with_active_page():
-    # st.button押下で、ページ下部の「次へ」「戻る」と同じ_go_to_page()
-    # （app.py側では_go_to_article_pageとしてimport）を呼ぶ構造になっている
-    # ことを確認する（scrollIntoView・ARTICLE_SCROLL_REQUEST_KEYはどちらも
-    # 使わない）。ARTICLE_ACTIVE_PAGE_KEYを直接書き換える古い方式に戻って
-    # いないことの回帰確認でもある。
+def test_article_mode_sidebar_has_no_page_jump_buttons():
+    # 記事モードは入力欄が多く状態管理も複雑なため、サイドバーからの
+    # 複数ページジャンプは入力欄が消えるリスクがあった（本番で複数回報告）。
+    # ページジャンプ用ボタンは撤去し、本文下部の「次へ」「戻る」（1段階移動
+    # のみ）に一本化したことを確認する。ARTICLE_ACTIVE_PAGE_KEYを直接
+    # 書き換える古い方式や、scrollIntoView系の仕組みが復活していないことも
+    # 合わせて回帰確認する。
     source = inspect.getsource(app._render_sidebar)
 
-    assert "st.button(" in source
-    assert "_go_to_article_page(" in source
-    assert "ARTICLE_ACTIVE_PAGE_KEY] = target_page" not in source
-    assert "ARTICLE_SCROLL_REQUEST_KEY" not in source
+    # "if current_menu == MENU_ARTICLE:"／"MENU_CHECK:"は_render_sidebar内に
+    # それぞれ2箇所ある（メニュー切替直後の同期処理のif/elifと、選択中の
+    # 画面移動サポート表示のif）。インデント幅（8スペース）で後者だけを
+    # 一意に取り出す。
+    article_block_start = source.index("\n        if current_menu == MENU_ARTICLE:")
+    article_block_end = source.index("\n        if current_menu == MENU_CHECK:")
+    article_block = source[article_block_start:article_block_end]
+
+    assert "st.button(" not in article_block
+    assert "_go_to_article_page(" not in article_block
+    assert "ARTICLE_ACTIVE_PAGE_KEY] = target_page" not in article_block
+    assert "ARTICLE_SCROLL_REQUEST_KEY" not in article_block
 
     for target_page in (
         "ARTICLE_PAGE_BASIC",
@@ -71,7 +80,38 @@ def test_article_mode_sidebar_navigation_uses_buttons_with_active_page():
         "ARTICLE_PAGE_DRAFT",
         "ARTICLE_PAGE_PRECHECK",
     ):
-        assert target_page in source
+        assert target_page not in article_block
+
+
+def test_article_mode_sidebar_shows_input_protection_guidance():
+    # ページジャンプボタンの代わりに、入力保護のための案内文が
+    # 表示されることを確認する。
+    source = inspect.getsource(app._render_sidebar)
+
+    # "if current_menu == MENU_ARTICLE:"／"MENU_CHECK:"は_render_sidebar内に
+    # それぞれ2箇所ある（メニュー切替直後の同期処理のif/elifと、選択中の
+    # 画面移動サポート表示のif）。インデント幅（8スペース）で後者だけを
+    # 一意に取り出す。
+    article_block_start = source.index("\n        if current_menu == MENU_ARTICLE:")
+    article_block_end = source.index("\n        if current_menu == MENU_CHECK:")
+    article_block = source[article_block_start:article_block_end]
+
+    assert "次へ" in article_block
+    assert "戻る" in article_block
+    assert "st.caption(" in article_block
+
+
+def test_main_menu_options_are_unchanged():
+    # 記事モードのページジャンプボタン撤去は、メインメニュー（モード切替）
+    # には影響しないことの回帰確認。
+    assert app.MENU_OPTIONS == [
+        app.MENU_HOME,
+        app.MENU_ARTICLE,
+        app.MENU_CHECK,
+        app.MENU_OFFICIAL,
+        app.MENU_HISTORY,
+        app.MENU_TERMS,
+    ]
 
 
 def test_quality_mode_sidebar_navigation_has_no_url_hash_links():
