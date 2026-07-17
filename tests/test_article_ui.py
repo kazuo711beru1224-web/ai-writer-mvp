@@ -1187,6 +1187,90 @@ def test_form_scoped_fields_still_restore_when_widget_key_is_fully_missing():
 
 
 # =========================
+# 3/6ページ（公式情報・確認先）のst.form撤去
+# （st.form内のwidgetは反映ボタンを押すまでsession_stateへ反映されない
+#   仕様のため、反映ボタンを押さずにページ移動すると入力が消えて見える
+#   不具合があった。evidence_url/title/facts/pointsを通常widget化し、
+#   on_changeで即時article__form_dataへ同期する方式に変更した）
+# =========================
+
+def test_official_info_page_does_not_use_st_form():
+    source = inspect.getsource(article_ui._render_page_3_official_info)
+    assert "st.form(" not in source
+    assert "st.form_submit_button(" not in source
+
+
+def test_official_info_page_evidence_fields_have_on_change_sync():
+    source = inspect.getsource(article_ui._render_page_3_official_info)
+    for field in ("evidence_url", "evidence_title", "evidence_facts", "evidence_points"):
+        assert f'args=("{field}",)' in source
+    assert source.count("on_change=_sync_form_data_field_from_widget") == 4
+
+
+def test_evidence_fields_persist_to_form_data_without_pressing_apply_button():
+    # on_change相当（_sync_form_data_field_from_widget）を模擬した後、
+    # 「この確認先を下書きに反映する」を押さずにページを移動しても、
+    # article__form_dataに値が残ることを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_OFFICIAL
+    render_article_ui(**_common_kwargs())
+
+    st.session_state[KEYS["evidence_url"]] = "https://example.jp/new"
+    st.session_state[KEYS["evidence_title"]] = "新しい資料名"
+    st.session_state[KEYS["evidence_facts"]] = "新しい数字"
+    st.session_state[KEYS["evidence_points"]] = "新しい要点"
+    for field in ("evidence_url", "evidence_title", "evidence_facts", "evidence_points"):
+        article_ui._sync_form_data_field_from_widget(field)
+    # 反映ボタンは押さない。
+
+    article_ui._go_to_page(ARTICLE_PAGE_STYLE)
+    render_article_ui(**_common_kwargs())
+
+    assert article_ui._get_form_data_value("evidence_url") == "https://example.jp/new"
+    assert article_ui._get_form_data_value("evidence_title") == "新しい資料名"
+    assert article_ui._get_form_data_value("evidence_facts") == "新しい数字"
+    assert article_ui._get_form_data_value("evidence_points") == "新しい要点"
+
+
+def test_apply_button_still_builds_combined_evidence_text():
+    # 反映ボタンの役割は「入力保存」ではなく、4項目からevidence合成文を
+    # 作ること。_sync_evidence_text_from_parts()の挙動自体は変更していない
+    # ことを確認する。
+    _reset_session_state()
+    st.session_state[KEYS["evidence_url"]] = "https://example.jp"
+    st.session_state[KEYS["evidence_title"]] = "資料名"
+    st.session_state[KEYS["evidence_facts"]] = "大事な数字"
+    st.session_state[KEYS["evidence_points"]] = "要点"
+
+    article_ui._sync_evidence_text_from_parts()
+
+    combined = st.session_state[KEYS["evidence"]]
+    assert "https://example.jp" in combined
+    assert "資料名" in combined
+    assert "大事な数字" in combined
+    assert "要点" in combined
+
+
+def test_effective_evidence_text_works_without_pressing_apply_button():
+    # 下書き生成が実際に使う_get_effective_input_evidence_text()は、
+    # 反映ボタンを押していなくても4項目の現在値からその場で確認先文を
+    # 作れることを確認する（反映ボタンは要約文の作成用途のみで、
+    # 生成結果そのものには影響しない設計であることの回帰確認）。
+    _reset_session_state()
+    st.session_state[KEYS["evidence_url"]] = "https://example.jp/pending"
+    st.session_state[KEYS["evidence_title"]] = "未反映の資料名"
+    st.session_state[KEYS["evidence_facts"]] = "未反映の数字"
+    st.session_state[KEYS["evidence_points"]] = "未反映の要点"
+
+    text = article_ui._get_effective_input_evidence_text()
+
+    assert "https://example.jp/pending" in text
+    assert "未反映の資料名" in text
+    assert "未反映の数字" in text
+    assert "未反映の要点" in text
+
+
+# =========================
 # blank時reseedの全FORM_DATA_WIDGET_SYNC_FIELDSへの拡張
 # （suggest/memo/tone_reg/main_kw/sub_kw/theme も、widget keyは残るが
 #   値だけ空文字に戻る現象が起きることが本番調査で判明したための回帰確認）

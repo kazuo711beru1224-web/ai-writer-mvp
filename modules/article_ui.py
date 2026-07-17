@@ -2760,52 +2760,64 @@ def _render_page_3_official_info() -> None:
 
     _render_reference_hint_section()
 
-    st.warning(
-        "このページの内容は、『この確認先を下書きに反映する』を押すまで下書きには使われません。"
-        "ページを移動する前に、入力後は必ず反映ボタンを押してください。"
+    st.caption(
+        "入力した内容はページを移動しても残ります。"
+        "『この確認先を下書きに反映する』は、入力内容を確認先の要約文にまとめるためのボタンです。"
     )
 
-    # クリックのたびに再実行されると画面が飛ぶため、確認先の入力欄は
-    # st.form にまとめ、反映ボタンを押すまで再実行させない。
-    with st.form("article_detail_settings_form", clear_on_submit=False):
-        st.text_input(
-            "すでに見つけた公式URL",
-            key=KEYS["evidence_url"],
-        )
-        st.caption(
-            "AIは公式URLを自動では取得しません。公式ページを見つけた場合は、ここに自分で貼ってください。"
-            "分からない場合は空欄で大丈夫です。確認先を探すための検索語やヒントは提案できるので、"
-            "下の『書類名・検索語』に思いつく言葉だけ入れてください。"
-        )
-
-        st.text_input(
-            "すでに分かっている書類名・検索語",
-            key=KEYS["evidence_title"],
-        )
-        st.caption(
-            "分かっている書類名や、検索した言葉があれば書いてください。"
-            "例：資格確認書、年金事務所、在職老齢年金、代表社員変更、登記申請書"
-        )
-
-        st.text_area(
-            "大事な数字・期限",
-            height=90,
-            key=KEYS["evidence_facts"],
-        )
-        st.caption(_get_detail_help_text()["numbers"])
-
-        st.text_area(
-            "このページでいちばん大事だったこと",
-            height=120,
-            key=KEYS["evidence_points"],
-        )
-        st.caption(_get_detail_help_text()["memo"])
-
-        detail_submitted = st.form_submit_button("この確認先を下書きに反映する")
-
+    # st.formは使わず通常widgetとして描画する。入力のたびにon_changeで
+    # article__form_dataへ即時同期するため（1/6ページのconsult_situation/
+    # consult_questionと同じ方式）、反映ボタンを押さなくてもページ移動で
+    # 値が消えない。
+    _seed_widget_from_form_data_if_missing("evidence_url")
+    st.text_input(
+        "すでに見つけた公式URL",
+        key=KEYS["evidence_url"],
+        on_change=_sync_form_data_field_from_widget,
+        args=("evidence_url",),
+    )
     st.caption(
-        "確認先を入力したら、先に『この確認先を下書きに反映する』を押してください。"
-        "押すまで下書きには使われません。"
+        "AIは公式URLを自動では取得しません。公式ページを見つけた場合は、ここに自分で貼ってください。"
+        "分からない場合は空欄で大丈夫です。確認先を探すための検索語やヒントは提案できるので、"
+        "下の『書類名・検索語』に思いつく言葉だけ入れてください。"
+    )
+
+    _seed_widget_from_form_data_if_missing("evidence_title")
+    st.text_input(
+        "すでに分かっている書類名・検索語",
+        key=KEYS["evidence_title"],
+        on_change=_sync_form_data_field_from_widget,
+        args=("evidence_title",),
+    )
+    st.caption(
+        "分かっている書類名や、検索した言葉があれば書いてください。"
+        "例：資格確認書、年金事務所、在職老齢年金、代表社員変更、登記申請書"
+    )
+
+    _seed_widget_from_form_data_if_missing("evidence_facts")
+    st.text_area(
+        "大事な数字・期限",
+        height=90,
+        key=KEYS["evidence_facts"],
+        on_change=_sync_form_data_field_from_widget,
+        args=("evidence_facts",),
+    )
+    st.caption(_get_detail_help_text()["numbers"])
+
+    _seed_widget_from_form_data_if_missing("evidence_points")
+    st.text_area(
+        "このページでいちばん大事だったこと",
+        height=120,
+        key=KEYS["evidence_points"],
+        on_change=_sync_form_data_field_from_widget,
+        args=("evidence_points",),
+    )
+    st.caption(_get_detail_help_text()["memo"])
+
+    detail_submitted = st.button(
+        "この確認先を下書きに反映する",
+        key="btn_article_apply_evidence",
+        use_container_width=True,
     )
 
     if detail_submitted:
