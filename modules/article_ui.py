@@ -588,11 +588,24 @@ def _sync_form_data_stage1_from_widgets() -> None:
     session_stateに存在するwidget keyだけを対象に同期する（非表示ページの
     widget keyが既に消えている場合はそのフィールドのform_dataを変更しない
     ＝空で潰さない）。
+
+    ただし、article__inputs_saved化した12項目（ARTICLE_INPUTS_SAVED_STAGE1_FIELDS）
+    については、widget keyがsession_stateに存在していても値が空文字なら
+    form_dataを上書きしない。6ページ構成では、非表示ページのwidget keyが
+    Streamlitの仕様で「キーは残るが値だけ空文字に戻る」ことがあり、この関数を
+    ページ移動のたびに呼ぶと、現在表示していない他ページの空文字がform_dataの
+    正しい値を踏み潰してしまう事故があったため（本番調査で確認済み）。
+    12項目以外（copy_text/evidence）は従来通り空文字も同期する。
     """
     for field in FORM_DATA_WIDGET_SYNC_FIELDS:
         widget_key = KEYS[field]
-        if widget_key in st.session_state:
-            _sync_form_data_field_from_widget(field)
+        if widget_key not in st.session_state:
+            continue
+        if field in ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+            current_value = st.session_state.get(widget_key, "")
+            if _is_blank(current_value):
+                continue
+        _sync_form_data_field_from_widget(field)
 
 
 def _sync_current_page_inputs_saved_from_widgets() -> None:

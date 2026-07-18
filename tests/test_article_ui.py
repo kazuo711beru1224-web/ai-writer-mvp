@@ -1462,6 +1462,55 @@ def test_page2_and_page4_fields_persist_to_form_data_without_page_transition():
 
 
 # =========================
+# 第2段階：_sync_form_data_stage1_from_widgetsの空文字ガード（案B-lite）
+# （本番調査で、非表示ページのwidget keyが空文字のまま残っている場合に、
+#   _go_to_page経由でarticle__form_dataの正しい値が空文字で踏み潰される
+#   ことを確認した。article__inputs_saved化した12項目については、
+#   widget keyが空文字ならform_dataを上書きしない）
+# =========================
+
+def test_sync_form_data_stage1_does_not_blank_out_stage1_fields():
+    _reset_session_state()
+    for field in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+        article_ui._set_form_data_value(field, f"正しい値-{field}")
+        # 非表示ページのwidget keyが空文字のまま残っている状況を再現する。
+        st.session_state[KEYS[field]] = ""
+
+    article_ui._sync_form_data_stage1_from_widgets()
+
+    for field in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+        assert article_ui._get_form_data_value(field) == f"正しい値-{field}"
+
+
+def test_sync_form_data_stage1_still_syncs_non_blank_stage1_fields():
+    # 空文字ガードを追加しても、widgetに実際に入力された非空値は
+    # 従来通りform_dataへ反映されることを確認する（回帰確認）。
+    _reset_session_state()
+    for field in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+        st.session_state[KEYS[field]] = f"新しい値-{field}"
+
+    article_ui._sync_form_data_stage1_from_widgets()
+
+    for field in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+        assert article_ui._get_form_data_value(field) == f"新しい値-{field}"
+
+
+def test_sync_form_data_stage1_still_blanks_out_non_stage1_fields():
+    # 12項目以外（copy_text/evidence）は、案B-lite導入前と同じ挙動
+    # （空文字も同期する）を維持することを確認する。
+    _reset_session_state()
+    article_ui._set_form_data_value("copy_text", "古いコピー本文")
+    article_ui._set_form_data_value("evidence", "古い根拠")
+    st.session_state[KEYS["copy_text"]] = ""
+    st.session_state[KEYS["evidence"]] = ""
+
+    article_ui._sync_form_data_stage1_from_widgets()
+
+    assert article_ui._get_form_data_value("copy_text") == ""
+    assert article_ui._get_form_data_value("evidence") == ""
+
+
+# =========================
 # blank時reseedの全FORM_DATA_WIDGET_SYNC_FIELDSへの拡張
 # （suggest/memo/tone_reg/main_kw/sub_kw/theme も、widget keyは残るが
 #   値だけ空文字に戻る現象が起きることが本番調査で判明したための回帰確認）

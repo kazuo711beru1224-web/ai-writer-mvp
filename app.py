@@ -15,6 +15,8 @@ import streamlit.components.v1 as components
 # =========================
 from modules.article_ui import (
     ARTICLE_FORM_DATA_KEY,
+    ARTICLE_INPUTS_SAVED_KEY,
+    ARTICLE_INPUTS_SAVED_STAGE1_FIELDS,
     render_article_ui,
     _go_to_page as _go_to_article_page,
     _backup_shadow_state as _backup_article_shadow_state,
@@ -703,6 +705,39 @@ def _apply_restore_payload(payload: Dict[str, Any]) -> None:
                 continue
             current_form_data[field] = str(value or "")
         st.session_state[ARTICLE_FORM_DATA_KEY] = current_form_data
+
+    # article__inputs_saved（記事モード入力材料12項目の優先正本、第1段階）も
+    # dictのためそのままマージする。article__form_dataと違い、空文字は
+    # 書き込まない（inputs_savedは「空なら書かない」を設計原則にしており、
+    # 汚染されたform_dataの空文字がinputs_saved側にまで伝播するのを防ぐため）。
+    # APIキーは絶対に混入させない。
+    inputs_saved_payload = payload.get(ARTICLE_INPUTS_SAVED_KEY)
+    if isinstance(inputs_saved_payload, dict):
+        current_inputs_saved = st.session_state.get(ARTICLE_INPUTS_SAVED_KEY)
+        if not isinstance(current_inputs_saved, dict):
+            current_inputs_saved = {}
+        for field, value in inputs_saved_payload.items():
+            if not isinstance(field, str) or field == "openai_api_key":
+                continue
+            if field not in ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+                continue
+            str_value = str(value or "")
+            if str_value.strip():
+                current_inputs_saved[field] = str_value
+        st.session_state[ARTICLE_INPUTS_SAVED_KEY] = current_inputs_saved
+    elif isinstance(form_data_payload, dict):
+        # 旧形式（article__inputs_savedがまだ存在しなかった保存データ）からの
+        # 互換移行。article__form_dataの12項目のうち非空のものだけを
+        # 初期値として取り込む（form_data側が空文字で汚染されていた場合に、
+        # その空文字をinputs_savedへ伝播させないため）。
+        current_inputs_saved = st.session_state.get(ARTICLE_INPUTS_SAVED_KEY)
+        if not isinstance(current_inputs_saved, dict):
+            current_inputs_saved = {}
+        for field in ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+            value = str(form_data_payload.get(field) or "")
+            if value.strip():
+                current_inputs_saved.setdefault(field, value)
+        st.session_state[ARTICLE_INPUTS_SAVED_KEY] = current_inputs_saved
 
     # 旧形式 snapshot しかない場合の安全補完
     snapshot = payload.get("snapshot")
