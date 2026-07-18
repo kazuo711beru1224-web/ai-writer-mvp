@@ -245,6 +245,12 @@ def _go_to_page(page: int) -> None:
     # 反映しておく（on_changeの保険。既にform_data化済みのconsult_situation/
     # consult_question/copy_textが、ページ移動で消えないようにするため）。
     _sync_form_data_stage1_from_widgets()
+    # article__inputs_saved（第1段階の12項目）も同様に、切り替え前の
+    # widget値を反映する。ただし対象は「今離れようとしているページ」の
+    # 項目だけに限定する（12項目一括同期は非表示ページの空文字で正しい
+    # 値を踏み潰す危険があるため、ARTICLE_INPUTS_SAVED_FIELDS_BY_PAGE経由で
+    # 現在ページ分だけを同期する）。
+    _sync_current_page_inputs_saved_from_widgets()
     st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = page
 
 
@@ -364,6 +370,71 @@ _FORM_DATA_FIELD_BY_WIDGET_KEY: Dict[str, str] = {
 }
 
 
+# =========================
+# article__inputs_saved（第1段階：文章チェックモード型の正本を12項目だけ導入）
+# =========================
+# article__form_dataと並行して存在する新しい正本。文章チェックモードの
+# 「widget ⇄ saved」1層構成に寄せるための第一歩として、1/6〜4/6の入力材料
+# 12項目（相談内容・検索キーワード・公式情報・書き方の希望）だけを対象にする。
+# copy_text/evidence/last_text/plan_result/copy_last_signはこの段階では対象外。
+#
+# article__form_dataは引き続き残し、同期のたびに互換のため同じ値を書く。
+# ただし読み取り（_get_effective_value・seed・reseed）は必ずこちらを優先する。
+ARTICLE_INPUTS_SAVED_KEY = "article__inputs_saved"
+
+# ページ移動前の同期（widget→inputs_saved）は、現在表示中のページの項目
+# だけに限定するために使う。render_article_ui()は非表示ページの分も含めて
+# 毎回widget keyをform_dataからseedし直すため、12項目を一括で
+# 「widget→inputs_saved」同期すると、非表示ページのwidget keyに残っている
+# 空文字でinputs_savedの正しい値を踏み潰してしまう危険がある。
+ARTICLE_INPUTS_SAVED_FIELDS_BY_PAGE: Dict[int, Tuple[str, ...]] = {
+    ARTICLE_PAGE_BASIC: (
+        "consult_situation",
+        "consult_question",
+    ),
+    ARTICLE_PAGE_KEYWORD: (
+        "suggest",
+    ),
+    ARTICLE_PAGE_OFFICIAL: (
+        "evidence_url",
+        "evidence_title",
+        "evidence_facts",
+        "evidence_points",
+    ),
+    ARTICLE_PAGE_STYLE: (
+        "memo",
+        "tone_reg",
+        "main_kw",
+        "sub_kw",
+        "theme",
+    ),
+}
+
+# 12項目のフラットな一覧。seed/reseed/クリア処理・テストなど「12項目全部を
+# まとめて扱いたい」場面専用。ページ移動前の「widget→inputs_saved」同期には
+# 使わない（ARTICLE_INPUTS_SAVED_FIELDS_BY_PAGE経由で現在ページ分だけを使う）。
+ARTICLE_INPUTS_SAVED_STAGE1_FIELDS: Tuple[str, ...] = (
+    "consult_situation",
+    "consult_question",
+    "suggest",
+    "evidence_url",
+    "evidence_title",
+    "evidence_facts",
+    "evidence_points",
+    "memo",
+    "tone_reg",
+    "main_kw",
+    "sub_kw",
+    "theme",
+)
+
+# _get_effective_value()がinputs_saved経由でも値を拾えるようにするための
+# widget key→inputs_savedフィールド名の逆引き。
+_INPUTS_SAVED_FIELD_BY_WIDGET_KEY: Dict[str, str] = {
+    KEYS[field]: field for field in ARTICLE_INPUTS_SAVED_STAGE1_FIELDS
+}
+
+
 def _ensure_article_form_data() -> None:
     """
     article__form_dataが無ければ作る。
@@ -400,6 +471,46 @@ def _clear_form_data_fields(*fields: str) -> None:
         form_data[field] = ""
 
 
+def _ensure_article_inputs_saved() -> None:
+    """article__inputs_savedが無ければ空dictで作る。"""
+    if not isinstance(st.session_state.get(ARTICLE_INPUTS_SAVED_KEY), dict):
+        st.session_state[ARTICLE_INPUTS_SAVED_KEY] = {}
+
+
+def _get_article_inputs_saved() -> Dict[str, str]:
+    _ensure_article_inputs_saved()
+    return st.session_state[ARTICLE_INPUTS_SAVED_KEY]
+
+
+def _get_inputs_saved_value(field: str) -> str:
+    return str(_get_article_inputs_saved().get(field, "") or "")
+
+
+def _set_inputs_saved_value(field: str, value: object) -> None:
+    _get_article_inputs_saved()[field] = str(value or "")
+
+
+def _clear_inputs_saved_fields(*fields: str) -> None:
+    inputs_saved = _get_article_inputs_saved()
+    for field in fields:
+        inputs_saved[field] = ""
+
+
+def _seed_widget_from_inputs_saved_if_missing(field: str) -> None:
+    """
+    widget keyがsession_stateに無い場合だけ、article__inputs_savedの値を
+    流し込む。_seed_widget_from_form_data_if_missing()より必ず先に呼び、
+    inputs_savedに値がある12項目についてはform_dataより先にwidget keyを
+    埋めることで、inputs_savedを優先させる（inputs_saved側が空の場合は
+    widget keyを埋めないため、後続のform_data seedがフォールバックできる）。
+    """
+    widget_key = KEYS[field]
+    if widget_key not in st.session_state:
+        value = _get_inputs_saved_value(field)
+        if not _is_blank(value):
+            st.session_state[widget_key] = value
+
+
 def _seed_widget_from_form_data_if_missing(field: str) -> None:
     """
     widget keyがsession_stateに無い場合（初回描画、またはStreamlitの仕様で
@@ -418,6 +529,18 @@ def _sync_form_data_field_from_widget(field: str) -> None:
     _set_form_data_value(field, st.session_state.get(widget_key, ""))
 
 
+def _sync_widget_to_inputs_saved(field: str) -> None:
+    """
+    widgetのon_changeから呼ぶ。現在値をそのまま（空文字も含めて）
+    article__inputs_savedへ反映する。互換のため、従来の正本である
+    article__form_dataにも同じ値を書く（article__form_dataは今回廃止しない）。
+    """
+    widget_key = KEYS[field]
+    value = st.session_state.get(widget_key, "")
+    _set_inputs_saved_value(field, value)
+    _set_form_data_value(field, value)
+
+
 # st.formの4項目（evidence_url/evidence_title/evidence_facts/
 # evidence_points）に限らず、on_changeを持たないwidget（suggest/memo/
 # tone_reg/main_kw/sub_kw/theme）も同様に、そのwidgetが描画されないrunが
@@ -432,6 +555,22 @@ def _sync_form_data_field_from_widget(field: str) -> None:
 # - widget値が非空（編集中の値） → 上書きしない
 # - form_dataも空文字（利用者が「入力欄を空にする」等で明示的に空にした
 #   ケース） → 復元しない（空のまま）
+def _reseed_blank_widget_from_inputs_saved(field: str) -> None:
+    """
+    widget値が空文字で、article__inputs_savedに非空値がある場合だけ
+    復元する。_reseed_blank_widget_from_form_data()より必ず先に呼び、
+    inputs_savedを優先させる（inputs_saved側が空の場合はwidgetを空のまま
+    にするため、後続のform_data reseedがフォールバックできる）。
+    """
+    widget_key = KEYS[field]
+    current = st.session_state.get(widget_key, "")
+    if not _is_blank(current):
+        return
+    value = _get_inputs_saved_value(field)
+    if not _is_blank(value):
+        st.session_state[widget_key] = value
+
+
 def _reseed_blank_widget_from_form_data(field: str) -> None:
     widget_key = KEYS[field]
     current = st.session_state.get(widget_key, "")
@@ -454,6 +593,24 @@ def _sync_form_data_stage1_from_widgets() -> None:
         widget_key = KEYS[field]
         if widget_key in st.session_state:
             _sync_form_data_field_from_widget(field)
+
+
+def _sync_current_page_inputs_saved_from_widgets() -> None:
+    """
+    _go_to_page()から呼ぶ、ページ移動前の保険同期。現在表示中のページに
+    属する項目だけを対象にする。render_article_ui()は非表示ページの分も
+    含めて毎回widget keyをform_dataからseedし直すため、12項目を一括で
+    「widget→inputs_saved」同期すると、非表示ページのwidget keyに残って
+    いる空文字でarticle__inputs_savedの正しい値を踏み潰す危険がある。
+    widget keyがまだ一度も描画されていない（session_stateにキー自体が
+    無い）場合は同期しない＝空文字で正本を上書きしない。
+    """
+    page = st.session_state.get(ARTICLE_ACTIVE_PAGE_KEY, ARTICLE_PAGE_BASIC)
+    fields = ARTICLE_INPUTS_SAVED_FIELDS_BY_PAGE.get(page, ())
+    for field in fields:
+        widget_key = KEYS[field]
+        if widget_key in st.session_state:
+            _sync_widget_to_inputs_saved(field)
 
 
 def _ensure_ui_flags_initialized() -> None:
@@ -879,6 +1036,12 @@ def _get_effective_value(key: str) -> str:
     if not _is_blank(current):
         return str(current).strip()
 
+    inputs_saved_field = _INPUTS_SAVED_FIELD_BY_WIDGET_KEY.get(key)
+    if inputs_saved_field:
+        inputs_saved_value = _get_inputs_saved_value(inputs_saved_field)
+        if not _is_blank(inputs_saved_value):
+            return str(inputs_saved_value).strip()
+
     form_data_field = _FORM_DATA_FIELD_BY_WIDGET_KEY.get(key)
     if form_data_field:
         form_data_value = _get_form_data_value(form_data_field)
@@ -967,6 +1130,11 @@ def _restore_stale_inputs_on_page_change() -> None:
     _restore_shadow_state_to_blanks()
     # 「widget keyは残るが値だけ空文字に戻る」現象（st.form内外を問わず
     # 起こりうる）の復元も、ページが切り替わった直後だけ行う。
+    # article__inputs_saved（第1段階の12項目）をform_dataより先に復元し、
+    # inputs_savedを優先させる（inputs_savedに値が無い項目だけform_data
+    # 側のreseedが後続でフォールバックする）。
+    for _field in ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+        _reseed_blank_widget_from_inputs_saved(_field)
     for _field in FORM_DATA_WIDGET_SYNC_FIELDS:
         _reseed_blank_widget_from_form_data(_field)
     st.session_state[ARTICLE_SHADOW_RESTORED_PAGE_KEY] = current_page
@@ -1023,6 +1191,9 @@ def _clear_form_only() -> None:
         "evidence_url", "evidence_title", "evidence_facts", "evidence_points",
         "evidence", "suggest",
     )
+    # article__inputs_saved（第1段階の12項目）も、明示的に入力欄を空にする
+    # 操作のときだけ揃えて空にする（下書きを消す操作では消さない）。
+    _clear_inputs_saved_fields(*ARTICLE_INPUTS_SAVED_STAGE1_FIELDS)
     st.session_state[KEYS["save_message"]] = "入力欄を空にしました。最初から整理し直したいときに使えます。"
 
 
@@ -2707,7 +2878,7 @@ def _render_page_1_basic() -> None:
         "困っていることや背景を書いてください",
         height=120,
         key=KEYS["consult_situation"],
-        on_change=_sync_form_data_field_from_widget,
+        on_change=_sync_widget_to_inputs_saved,
         args=("consult_situation",),
     )
     st.caption("例：63歳会社員。給与28万円と賞与があり、年金がどう変わるか知りたい。")
@@ -2718,7 +2889,7 @@ def _render_page_1_basic() -> None:
         "何を知りたいか、どう判断したいかを書いてください",
         height=90,
         key=KEYS["consult_question"],
-        on_change=_sync_form_data_field_from_widget,
+        on_change=_sync_widget_to_inputs_saved,
         args=("consult_question",),
     )
     st.caption("例：給与と賞与はどう合算されるか。今の基準額は何か。")
@@ -2738,7 +2909,7 @@ def _render_page_2_keyword_and_detail_entry() -> None:
     st.text_input(
         "例：在職老齢年金, 支給停止, 65万円基準",
         key=KEYS["suggest"],
-        on_change=_sync_form_data_field_from_widget,
+        on_change=_sync_widget_to_inputs_saved,
         args=("suggest",),
     )
 
@@ -2783,7 +2954,7 @@ def _render_page_3_official_info() -> None:
     st.text_input(
         "すでに見つけた公式URL",
         key=KEYS["evidence_url"],
-        on_change=_sync_form_data_field_from_widget,
+        on_change=_sync_widget_to_inputs_saved,
         args=("evidence_url",),
     )
     st.caption(
@@ -2796,7 +2967,7 @@ def _render_page_3_official_info() -> None:
     st.text_input(
         "すでに分かっている書類名・検索語",
         key=KEYS["evidence_title"],
-        on_change=_sync_form_data_field_from_widget,
+        on_change=_sync_widget_to_inputs_saved,
         args=("evidence_title",),
     )
     st.caption(
@@ -2809,7 +2980,7 @@ def _render_page_3_official_info() -> None:
         "大事な数字・期限",
         height=90,
         key=KEYS["evidence_facts"],
-        on_change=_sync_form_data_field_from_widget,
+        on_change=_sync_widget_to_inputs_saved,
         args=("evidence_facts",),
     )
     st.caption(_get_detail_help_text()["numbers"])
@@ -2819,7 +2990,7 @@ def _render_page_3_official_info() -> None:
         "このページでいちばん大事だったこと",
         height=120,
         key=KEYS["evidence_points"],
-        on_change=_sync_form_data_field_from_widget,
+        on_change=_sync_widget_to_inputs_saved,
         args=("evidence_points",),
     )
     st.caption(_get_detail_help_text()["memo"])
@@ -2860,7 +3031,7 @@ def _render_page_4_writing_style() -> None:
         "読者や書き方のメモ",
         height=110,
         key=KEYS["memo"],
-        on_change=_sync_form_data_field_from_widget,
+        on_change=_sync_widget_to_inputs_saved,
         args=("memo",),
     )
 
@@ -2869,7 +3040,7 @@ def _render_page_4_writing_style() -> None:
         "トンマナ・レギュレーション（任意）",
         height=90,
         key=KEYS["tone_reg"],
-        on_change=_sync_form_data_field_from_widget,
+        on_change=_sync_widget_to_inputs_saved,
         args=("tone_reg",),
     )
     st.caption("トンマナ・レギュレーション：文体、禁止表現、言い回しのルールを書いてください。空欄なら標準設定で作成します。")
@@ -2885,7 +3056,7 @@ def _render_page_4_writing_style() -> None:
         st.text_input(
             "この記事で中心にする言葉",
             key=KEYS["main_kw"],
-            on_change=_sync_form_data_field_from_widget,
+            on_change=_sync_widget_to_inputs_saved,
             args=("main_kw",),
         )
 
@@ -2896,7 +3067,7 @@ def _render_page_4_writing_style() -> None:
         st.text_input(
             "一緒に入れたい関連語",
             key=KEYS["sub_kw"],
-            on_change=_sync_form_data_field_from_widget,
+            on_change=_sync_widget_to_inputs_saved,
             args=("sub_kw",),
         )
 
@@ -2907,7 +3078,7 @@ def _render_page_4_writing_style() -> None:
         st.text_input(
             "記事の仮タイトル・方向性",
             key=KEYS["theme"],
-            on_change=_sync_form_data_field_from_widget,
+            on_change=_sync_widget_to_inputs_saved,
             args=("theme",),
         )
 
@@ -2978,6 +3149,12 @@ def render_article_ui(
     # そのため、form_dataの用意とform_data→widgetの流し込みは、
     # _ensure_keys_initialized()より必ず先に行う。
     _ensure_article_form_data()
+    _ensure_article_inputs_saved()
+    # article__inputs_saved（第1段階の12項目）をform_dataより先にseedし、
+    # inputs_savedを優先させる（inputs_savedに値が無い項目だけform_data側の
+    # seedが後続でフォールバックする）。
+    for _field in ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+        _seed_widget_from_inputs_saved_if_missing(_field)
     for _field in FORM_DATA_WIDGET_SYNC_FIELDS:
         _seed_widget_from_form_data_if_missing(_field)
 

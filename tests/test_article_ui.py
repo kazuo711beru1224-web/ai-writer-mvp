@@ -1202,7 +1202,11 @@ def test_official_info_page_evidence_fields_have_on_change_sync():
     source = inspect.getsource(article_ui._render_page_3_official_info)
     for field in ("evidence_url", "evidence_title", "evidence_facts", "evidence_points"):
         assert f'args=("{field}",)' in source
-    assert source.count("on_change=_sync_form_data_field_from_widget") == 4
+    # 第1段階でarticle__inputs_saved化した12項目の一部のため、
+    # on_change先はarticle__inputs_saved同期関数に変わった
+    # （_sync_widget_to_inputs_savedは内部でarticle__form_dataにも書くため、
+    #   form_dataへの反映自体は引き続き行われる）。
+    assert source.count("on_change=_sync_widget_to_inputs_saved") == 4
 
 
 def test_evidence_fields_persist_to_form_data_without_pressing_apply_button():
@@ -1430,14 +1434,18 @@ def test_page2_suggest_field_has_on_change_sync():
     source = inspect.getsource(article_ui._render_page_2_keyword_and_detail_entry)
     for field in _PAGE2_ON_CHANGE_FIELDS:
         assert f'args=("{field}",)' in source
-    assert source.count("on_change=_sync_form_data_field_from_widget") == len(_PAGE2_ON_CHANGE_FIELDS)
+    # 第1段階でarticle__inputs_saved化した12項目のため、
+    # on_change先はarticle__inputs_saved同期関数に変わった。
+    assert source.count("on_change=_sync_widget_to_inputs_saved") == len(_PAGE2_ON_CHANGE_FIELDS)
 
 
 def test_page4_fields_have_on_change_sync():
     source = inspect.getsource(article_ui._render_page_4_writing_style)
     for field in _PAGE4_ON_CHANGE_FIELDS:
         assert f'args=("{field}",)' in source
-    assert source.count("on_change=_sync_form_data_field_from_widget") == len(_PAGE4_ON_CHANGE_FIELDS)
+    # 第1段階でarticle__inputs_saved化した12項目のため、
+    # on_change先はarticle__inputs_saved同期関数に変わった。
+    assert source.count("on_change=_sync_widget_to_inputs_saved") == len(_PAGE4_ON_CHANGE_FIELDS)
 
 
 def test_page2_and_page4_fields_persist_to_form_data_without_page_transition():
@@ -1695,3 +1703,188 @@ def test_page5_validation_failure_does_not_generate_draft(monkeypatch):
     render_article_ui(**_common_kwargs())
 
     assert st.session_state.get(KEYS["last_text"], "") == ""
+
+
+# =========================
+# article__inputs_saved（第1段階：文章チェックモード型の正本を12項目だけ導入）
+# 1/6〜4/6の入力材料12項目（consult_situation/consult_question/suggest/
+# evidence_url/evidence_title/evidence_facts/evidence_points/memo/
+# tone_reg/main_kw/sub_kw/theme）だけを対象に、article__form_dataと並行して
+# 存在する新しい正本article__inputs_savedを導入する。
+# copy_text/evidence/last_text/plan_result/copy_last_signはこの段階では対象外。
+# =========================
+
+def test_inputs_saved_stage1_fields_has_exactly_12_items():
+    assert len(article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS) == 12
+    assert set(article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS) == {
+        "consult_situation", "consult_question", "suggest",
+        "evidence_url", "evidence_title", "evidence_facts", "evidence_points",
+        "memo", "tone_reg", "main_kw", "sub_kw", "theme",
+    }
+
+
+def test_inputs_saved_stage1_fields_excludes_out_of_scope_fields():
+    # copy_text/evidence/last_text/plan_result/copy_last_sigは第1段階の対象外。
+    for field in ("copy_text", "evidence", "last_text", "plan_result", "copy_last_sig"):
+        assert field not in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS
+
+
+def test_inputs_saved_fields_by_page_covers_exactly_stage1_fields():
+    # ページごとの対象フィールド表を全部足し合わせると、12項目のフラット
+    # 一覧とちょうど一致する（漏れ・重複が無い）ことを確認する。
+    flattened = [
+        field
+        for fields in article_ui.ARTICLE_INPUTS_SAVED_FIELDS_BY_PAGE.values()
+        for field in fields
+    ]
+    assert sorted(flattened) == sorted(article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS)
+    assert len(flattened) == len(set(flattened))
+
+
+def test_all_12_fields_are_saved_into_inputs_saved_when_synced():
+    # 12項目それぞれについて、on_change相当（_sync_widget_to_inputs_saved）を
+    # 各ページで模擬すると、article__inputs_savedに反映されることを確認する。
+    _reset_session_state()
+    field_values = {field: f"value-{field}" for field in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS}
+
+    for page, fields in article_ui.ARTICLE_INPUTS_SAVED_FIELDS_BY_PAGE.items():
+        st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = page
+        for field in fields:
+            st.session_state[KEYS[field]] = field_values[field]
+            article_ui._sync_widget_to_inputs_saved(field)
+
+    for field, value in field_values.items():
+        assert article_ui._get_inputs_saved_value(field) == value
+
+
+def test_go_to_page_only_syncs_current_page_fields_into_inputs_saved():
+    # 現在ページ以外の項目のwidget keyが空文字で残っていても、article__inputs_saved
+    # の値を踏み潰さないことを確認する（12項目一括同期をやめ、現在ページの
+    # 項目だけに限定した第1段階修正の核心となる回帰テスト）。
+    _reset_session_state()
+    article_ui._set_inputs_saved_value("consult_situation", "非表示ページの正しい値")
+    # 1/6ページ（consult_situationが属するページ）のwidget keyが、
+    # 何らかの理由で空文字のまま残っている状況を再現する。
+    st.session_state[KEYS["consult_situation"]] = ""
+    # 現在ページは4/6（consult_situationとは無関係のページ）。
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_STYLE
+    st.session_state[KEYS["memo"]] = "スタイルページの新しい値"
+
+    article_ui._go_to_page(ARTICLE_PAGE_DRAFT)
+
+    # 現在ページ（4/6）のmemoは同期される。
+    assert article_ui._get_inputs_saved_value("memo") == "スタイルページの新しい値"
+    # 現在ページに属さないconsult_situationは、widget keyが空文字でも
+    # 上書きされず、元の非空値のままである。
+    assert article_ui._get_inputs_saved_value("consult_situation") == "非表示ページの正しい値"
+
+
+def test_widget_key_missing_restores_from_inputs_saved():
+    # widget keyがsession_stateに無い（非表示ページでStreamlitの仕様により
+    # 消えた想定）場合、article__inputs_savedから復元されることを確認する。
+    _reset_session_state()
+    article_ui._set_inputs_saved_value("main_kw", "保存済みのキーワード")
+    if KEYS["main_kw"] in st.session_state:
+        del st.session_state[KEYS["main_kw"]]
+
+    article_ui._seed_widget_from_inputs_saved_if_missing("main_kw")
+
+    assert st.session_state[KEYS["main_kw"]] == "保存済みのキーワード"
+
+
+def test_widget_key_blank_restores_from_inputs_saved_via_reseed():
+    # widget keyは残るが値だけ空文字に戻るケースでも、article__inputs_saved
+    # から復元されることを確認する。
+    _reset_session_state()
+    article_ui._set_inputs_saved_value("theme", "保存済みのテーマ")
+    st.session_state[KEYS["theme"]] = ""
+
+    article_ui._reseed_blank_widget_from_inputs_saved("theme")
+
+    assert st.session_state[KEYS["theme"]] == "保存済みのテーマ"
+
+
+def test_page_change_restores_blank_widget_from_inputs_saved():
+    # 実際のページ切り替え経路（_restore_stale_inputs_on_page_change）を
+    # 通しても、空文字widgetがarticle__inputs_savedから復元されることを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    article_ui._set_inputs_saved_value("consult_question", "保存済みの質問")
+    st.session_state[KEYS["consult_question"]] = ""
+    # ページが実際に切り替わった直後であることにする
+    # （このガードが無いと同じページ内の再描画のたびに毎回復元してしまう）。
+    st.session_state[article_ui.ARTICLE_SHADOW_RESTORED_PAGE_KEY] = ARTICLE_PAGE_KEYWORD
+
+    article_ui._restore_stale_inputs_on_page_change()
+
+    assert st.session_state[KEYS["consult_question"]] == "保存済みの質問"
+
+
+def test_get_effective_value_prefers_inputs_saved_over_form_data():
+    # 表示・判定用の読み取りヘルパーで、article__form_dataより
+    # article__inputs_savedが優先されることを確認する。
+    _reset_session_state()
+    article_ui._set_form_data_value("suggest", "古いform_dataの値")
+    article_ui._set_inputs_saved_value("suggest", "新しいinputs_savedの値")
+    if KEYS["suggest"] in st.session_state:
+        del st.session_state[KEYS["suggest"]]
+
+    assert article_ui._get_effective_value(KEYS["suggest"]) == "新しいinputs_savedの値"
+
+
+def test_seed_widget_prefers_inputs_saved_over_form_data():
+    # widget key不在時のseedでも、article__form_dataより
+    # article__inputs_savedが先に埋まって優先されることを確認する
+    # （render_article_ui冒頭のbulk seedループの呼び出し順序の回帰確認）。
+    _reset_session_state()
+    article_ui._set_form_data_value("evidence_title", "古いform_dataの値")
+    article_ui._set_inputs_saved_value("evidence_title", "新しいinputs_savedの値")
+    if KEYS["evidence_title"] in st.session_state:
+        del st.session_state[KEYS["evidence_title"]]
+
+    article_ui._seed_widget_from_inputs_saved_if_missing("evidence_title")
+    article_ui._seed_widget_from_form_data_if_missing("evidence_title")
+
+    assert st.session_state[KEYS["evidence_title"]] == "新しいinputs_savedの値"
+
+
+def test_reseed_widget_prefers_inputs_saved_over_form_data():
+    # widget値が空文字のときのreseedでも、article__form_dataより
+    # article__inputs_savedが先に埋まって優先されることを確認する
+    # （_restore_stale_inputs_on_page_change内の呼び出し順序の回帰確認）。
+    _reset_session_state()
+    article_ui._set_form_data_value("sub_kw", "古いform_dataの値")
+    article_ui._set_inputs_saved_value("sub_kw", "新しいinputs_savedの値")
+    st.session_state[KEYS["sub_kw"]] = ""
+
+    article_ui._reseed_blank_widget_from_inputs_saved("sub_kw")
+    article_ui._reseed_blank_widget_from_form_data("sub_kw")
+
+    assert st.session_state[KEYS["sub_kw"]] == "新しいinputs_savedの値"
+
+
+def test_clear_generated_only_preserves_inputs_saved():
+    # 「下書きを消す」操作では、article__inputs_savedの12項目を消さないことを確認する。
+    _reset_session_state()
+    for field in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+        article_ui._set_inputs_saved_value(field, f"value-{field}")
+    st.session_state[KEYS["last_text"]] = "AIが作った下書き"
+
+    article_ui._clear_generated_only()
+
+    for field in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+        assert article_ui._get_inputs_saved_value(field) == f"value-{field}"
+
+
+def test_clear_form_only_clears_inputs_saved_stage1_fields():
+    # 「入力欄を空にする」操作のときだけ、article__inputs_savedの12項目が空になることを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    render_article_ui(**_common_kwargs())
+    for field in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+        article_ui._set_inputs_saved_value(field, f"value-{field}")
+
+    article_ui._clear_form_only()
+
+    for field in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+        assert article_ui._get_inputs_saved_value(field) == ""
