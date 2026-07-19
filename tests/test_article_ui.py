@@ -2097,12 +2097,16 @@ def test_page_1_restores_consult_fields_before_text_area_draw(monkeypatch):
             observed[key] = st.session_state.get(key, "")
         return ""
 
+    rerun_calls = []
     monkeypatch.setattr(st, "text_area", fake_text_area)
+    monkeypatch.setattr(st, "rerun", lambda: rerun_calls.append(1))
 
     article_ui._render_page_1_basic()
 
     assert observed[KEYS["consult_situation"]] == "状況の保存値"
     assert observed[KEYS["consult_question"]] == "質問の保存値"
+    # 復元が実際に起きたので、st.rerun()が1回だけ呼ばれる
+    assert len(rerun_calls) == 1
 
 
 def test_page_2_restores_suggest_before_text_input_draw(monkeypatch):
@@ -2119,9 +2123,107 @@ def test_page_2_restores_suggest_before_text_input_draw(monkeypatch):
             observed[key] = st.session_state.get(key, "")
         return ""
 
+    rerun_calls = []
     monkeypatch.setattr(st, "text_input", fake_text_input)
     monkeypatch.setattr(st, "button", lambda label, **kwargs: False)
+    monkeypatch.setattr(st, "rerun", lambda: rerun_calls.append(1))
 
     article_ui._render_page_2_keyword_and_detail_entry()
 
     assert observed[KEYS["suggest"]] == "サジェストの保存値"
+    # 復元が実際に起きたので、st.rerun()が1回だけ呼ばれる
+    assert len(rerun_calls) == 1
+
+
+# =========================
+# 復元発生時の一度だけのrerun（本番調査：session_stateは復元済みなのに
+# ブラウザ側のwidget表示に反映されないケースへの対応）
+# =========================
+
+def test_restore_current_page_inputs_before_render_returns_true_when_restored():
+    _reset_session_state()
+    article_ui._set_inputs_saved_value("consult_situation", "相談内容の続き")
+    st.session_state[KEYS["consult_situation"]] = ""
+
+    restored = article_ui._restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
+
+    assert restored is True
+    assert st.session_state[KEYS["consult_situation"]] == "相談内容の続き"
+
+
+def test_restore_current_page_inputs_before_render_returns_false_when_nothing_to_restore():
+    _reset_session_state()
+    st.session_state[KEYS["consult_situation"]] = "入力中の値"
+    st.session_state[KEYS["consult_question"]] = "入力中の値2"
+
+    restored = article_ui._restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
+
+    assert restored is False
+
+
+def test_restore_current_page_inputs_before_render_returns_false_when_page_has_no_saved_values():
+    _reset_session_state()
+
+    restored = article_ui._restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
+
+    assert restored is False
+
+
+def test_rerun_guard_fires_once_then_skips_on_same_page(monkeypatch):
+    _reset_session_state()
+    rerun_calls = []
+    monkeypatch.setattr(st, "rerun", lambda: rerun_calls.append(1))
+
+    article_ui._rerun_once_after_page_input_restore(ARTICLE_PAGE_BASIC, True)
+    assert len(rerun_calls) == 1
+    assert st.session_state[article_ui.ARTICLE_PRE_RENDER_RESTORE_RERUN_PAGE_KEY] == ARTICLE_PAGE_BASIC
+
+    # 同じページで復元がもう一度起きたことになっても、既にこのページの
+    # 着地判定は済んでいるためrerunしない（無限rerun防止）。
+    article_ui._rerun_once_after_page_input_restore(ARTICLE_PAGE_BASIC, True)
+    assert len(rerun_calls) == 1
+
+
+def test_rerun_guard_does_not_rerun_when_nothing_restored(monkeypatch):
+    _reset_session_state()
+    rerun_calls = []
+    monkeypatch.setattr(st, "rerun", lambda: rerun_calls.append(1))
+
+    article_ui._rerun_once_after_page_input_restore(ARTICLE_PAGE_BASIC, False)
+
+    assert rerun_calls == []
+
+
+def test_rerun_guard_allows_fresh_rerun_after_revisiting_same_page(monkeypatch):
+    # 1/6→2/6→1/6と移動して戻ってきたとき（本番で報告された往復パターン）、
+    # 2/6滞在中に復元が起きなくても、1/6への再訪問では改めて1回だけ
+    # rerunできることを確認する。
+    _reset_session_state()
+    rerun_calls = []
+    monkeypatch.setattr(st, "rerun", lambda: rerun_calls.append(1))
+
+    article_ui._rerun_once_after_page_input_restore(ARTICLE_PAGE_BASIC, True)
+    assert len(rerun_calls) == 1
+
+    article_ui._rerun_once_after_page_input_restore(ARTICLE_PAGE_KEYWORD, False)
+    assert len(rerun_calls) == 1
+
+    article_ui._rerun_once_after_page_input_restore(ARTICLE_PAGE_BASIC, True)
+    assert len(rerun_calls) == 2
+
+
+def test_non_blank_widget_is_not_overwritten_and_does_not_trigger_rerun(monkeypatch):
+    _reset_session_state()
+    article_ui._set_inputs_saved_value("consult_situation", "古い保存値")
+    st.session_state[KEYS["consult_situation"]] = "今まさに入力中の値"
+    st.session_state[KEYS["consult_question"]] = "今まさに入力中の値2"
+
+    rerun_calls = []
+    monkeypatch.setattr(st, "rerun", lambda: rerun_calls.append(1))
+
+    restored = article_ui._restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
+    article_ui._rerun_once_after_page_input_restore(ARTICLE_PAGE_BASIC, restored)
+
+    assert restored is False
+    assert st.session_state[KEYS["consult_situation"]] == "今まさに入力中の値"
+    assert rerun_calls == []

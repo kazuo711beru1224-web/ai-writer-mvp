@@ -231,6 +231,11 @@ ARTICLE_PAGE_LABELS: Dict[int, str] = {
 # 画面表示専用の値なので、PERSIST_KEYSには含めない。
 ARTICLE_SHADOW_RESTORED_PAGE_KEY = "article__shadow_restored_page"
 
+# _rerun_once_after_page_input_restore()の無限rerun防止ガード。
+# 「直近でrerun判定を行った時点のページ番号」を記録する。画面表示専用の
+# 値なので、PERSIST_KEYSには含めない。
+ARTICLE_PRE_RENDER_RESTORE_RERUN_PAGE_KEY = "article__pre_render_restore_rerun_page"
+
 
 def _ensure_active_page_initialized() -> None:
     if ARTICLE_ACTIVE_PAGE_KEY not in st.session_state:
@@ -626,7 +631,7 @@ def _sync_current_page_inputs_saved_from_widgets() -> None:
             _sync_widget_to_inputs_saved(field)
 
 
-def _restore_current_page_inputs_before_render(page: int) -> None:
+def _restore_current_page_inputs_before_render(page: int) -> bool:
     """
     本番デバッグ表示で確認された現象への対応：article__inputs_savedと
     widget keyの両方に値が残っているにも関わらず、1/6へ戻った直後は
@@ -643,6 +648,10 @@ def _restore_current_page_inputs_before_render(page: int) -> None:
       （非空の場合は上書きしない＝入力中の値を壊さない）
     - article__inputs_savedが空の場合はarticle__form_dataをフォールバックに使う
 
+    戻り値：この呼び出しで実際にwidget keyへ値を書き込んだ（復元した）
+    フィールドが1つでもあればTrue。呼び出し側（_rerun_once_after_page_input_restore）
+    が「復元が起きた場合だけrerunする」判定に使う。
+
     懸念（ゾンビ現象）：
     「widget keyが空文字＝利用者が今まさに入力欄を空にした」場合と
     「widget keyが空文字＝Streamlitの仕様でたまたま値が消えた」場合を
@@ -653,6 +662,7 @@ def _restore_current_page_inputs_before_render(page: int) -> None:
     別途持たない限り、この懸念は残り続ける。
     """
     fields = ARTICLE_INPUTS_SAVED_FIELDS_BY_PAGE.get(page, ())
+    restored = False
     for field in fields:
         widget_key = KEYS[field]
         current = str(st.session_state.get(widget_key, "") or "")
@@ -663,6 +673,41 @@ def _restore_current_page_inputs_before_render(page: int) -> None:
             value = _get_form_data_value(field)
         if not _is_blank(value):
             st.session_state[widget_key] = value
+            restored = True
+    return restored
+
+
+def _rerun_once_after_page_input_restore(page: int, restored: bool) -> None:
+    """
+    本番調査で、article__inputs_saved・widget keyの両方に値が残っている
+    にも関わらず、ブラウザ側のst.text_area/st.text_inputの表示が反映
+    されないケースが確認された。_restore_current_page_inputs_before_render()
+    が同じrun内でwidget keyへ値を書き込んでも、その値を使って
+    ブラウザ側の入力欄を新規に描画し直す（＝次のrunを素直に頭から
+    始めさせる）方が確実だと判断し、復元が実際に起きた場合だけ、
+    そのページの他のwidgetを描画する前に一度だけst.rerun()する。
+
+    無限rerun防止：
+    ARTICLE_PRE_RENDER_RESTORE_RERUN_PAGE_KEYに「直近でこの判定を
+    行ったページ番号」を記録する。
+    - 記録済みページ番号が現在のpageと同じ＝同じページ内の再実行
+      （st.rerun()自体によるrerun、または他のwidget操作によるrerun）
+      なので、今回はrerun判定そのものをスキップする（既に判定済み）。
+    - 記録済みページ番号が現在のpageと異なる＝新しい着地（初回訪問、
+      または一度別ページへ移った後の再訪問）。この場合は改めて判定し、
+      restored=Trueならrerunする。restoredの有無に関わらず、記録は
+      現在のpageで更新する（＝この着地を「判定済み」にする）。
+    これにより、同じページに何度も戻ってくるたびに毎回1回ずつだけ
+    rerunできる一方、同じ着地の中でrerun後に再度この関数が呼ばれても
+    （st.rerun()は即座にスクリプトを打ち切るため通常は起こらないが、
+    念のため）連続rerunにはならない。
+    """
+    guard_page = st.session_state.get(ARTICLE_PRE_RENDER_RESTORE_RERUN_PAGE_KEY)
+    if guard_page == page:
+        return
+    st.session_state[ARTICLE_PRE_RENDER_RESTORE_RERUN_PAGE_KEY] = page
+    if restored:
+        st.rerun()
 
 
 def _ensure_ui_flags_initialized() -> None:
@@ -2918,7 +2963,8 @@ def _save_article_file(*, outputs_dir: str, body_text: str) -> tuple[bool, str]:
 
 
 def _render_page_1_basic() -> None:
-    _restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
+    _restored = _restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
+    _rerun_once_after_page_input_restore(ARTICLE_PAGE_BASIC, _restored)
     st.markdown("## 📝 かんたん記事作成")
     st.write("まずは2つだけで大丈夫です。")
 
@@ -2951,7 +2997,8 @@ def _render_page_1_basic() -> None:
 
 
 def _render_page_2_keyword_and_detail_entry() -> None:
-    _restore_current_page_inputs_before_render(ARTICLE_PAGE_KEYWORD)
+    _restored = _restore_current_page_inputs_before_render(ARTICLE_PAGE_KEYWORD)
+    _rerun_once_after_page_input_restore(ARTICLE_PAGE_KEYWORD, _restored)
     st.markdown("## 🔍 検索キーワード・詳細設定")
 
     st.markdown("### 3. 検索キーワード（任意）")
@@ -2987,7 +3034,8 @@ def _render_page_2_keyword_and_detail_entry() -> None:
 
 
 def _render_page_3_official_info() -> None:
-    _restore_current_page_inputs_before_render(ARTICLE_PAGE_OFFICIAL)
+    _restored = _restore_current_page_inputs_before_render(ARTICLE_PAGE_OFFICIAL)
+    _rerun_once_after_page_input_restore(ARTICLE_PAGE_OFFICIAL, _restored)
     st.markdown("## 📚 公式情報・確認先")
     st.caption("通常は空欄でも大丈夫です。分かる範囲だけ入力してください。")
 
@@ -3070,7 +3118,8 @@ def _render_page_3_official_info() -> None:
 
 
 def _render_page_4_writing_style() -> None:
-    _restore_current_page_inputs_before_render(ARTICLE_PAGE_STYLE)
+    _restored = _restore_current_page_inputs_before_render(ARTICLE_PAGE_STYLE)
+    _rerun_once_after_page_input_restore(ARTICLE_PAGE_STYLE, _restored)
     st.markdown("## ✏️ 書き方の希望")
     st.caption("通常は空欄でも大丈夫です。必要なときだけ入力してください。")
 
