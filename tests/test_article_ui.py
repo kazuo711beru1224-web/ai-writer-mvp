@@ -2032,3 +2032,96 @@ def test_debug_panel_shows_exactly_12_rows_when_checkbox_checked(monkeypatch):
     rows = dataframe_calls[0][0][0]
     assert len(rows) == 12
     assert {row["項目"] for row in rows} == set(article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS)
+
+
+# =========================
+# ページ描画前の入力復元（本番調査：widget/inputs_savedの両方に値が
+# 残っているのに画面の入力欄が空に見える現象への対応）
+# =========================
+
+def test_restore_current_page_inputs_before_render_fills_blank_widget():
+    _reset_session_state()
+    article_ui._set_inputs_saved_value("consult_situation", "相談内容の続き")
+    st.session_state[KEYS["consult_situation"]] = ""
+
+    article_ui._restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
+
+    assert st.session_state[KEYS["consult_situation"]] == "相談内容の続き"
+
+
+def test_restore_current_page_inputs_before_render_fills_missing_widget():
+    _reset_session_state()
+    article_ui._set_inputs_saved_value("consult_question", "知りたいことの続き")
+    assert KEYS["consult_question"] not in st.session_state
+
+    article_ui._restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
+
+    assert st.session_state[KEYS["consult_question"]] == "知りたいことの続き"
+
+
+def test_restore_current_page_inputs_before_render_does_not_overwrite_non_blank_widget():
+    _reset_session_state()
+    article_ui._set_inputs_saved_value("consult_situation", "古い保存値")
+    st.session_state[KEYS["consult_situation"]] = "今まさに入力中の値"
+
+    article_ui._restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
+
+    assert st.session_state[KEYS["consult_situation"]] == "今まさに入力中の値"
+
+
+def test_restore_current_page_inputs_before_render_only_touches_current_page_fields():
+    _reset_session_state()
+    # suggestは2/6の項目。1/6分の復元を呼んでも触らないことを確認する。
+    article_ui._set_inputs_saved_value("suggest", "サジェストの値")
+
+    article_ui._restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
+
+    assert KEYS["suggest"] not in st.session_state
+
+
+def test_page_1_restores_consult_fields_before_text_area_draw(monkeypatch):
+    # 1/6のconsult_situation/consult_questionが、st.text_areaの描画（呼び出し）
+    # より前に復元されていることを確認する。fake_text_areaはst.text_area
+    # 呼び出し時点のsession_state値を記録するため、記録値が復元後の値なら
+    # 「描画前に復元済み」であることの証明になる。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    article_ui._set_inputs_saved_value("consult_situation", "状況の保存値")
+    article_ui._set_inputs_saved_value("consult_question", "質問の保存値")
+
+    observed = {}
+
+    def fake_text_area(label, *args, **kwargs):
+        key = kwargs.get("key")
+        if key:
+            observed[key] = st.session_state.get(key, "")
+        return ""
+
+    monkeypatch.setattr(st, "text_area", fake_text_area)
+
+    article_ui._render_page_1_basic()
+
+    assert observed[KEYS["consult_situation"]] == "状況の保存値"
+    assert observed[KEYS["consult_question"]] == "質問の保存値"
+
+
+def test_page_2_restores_suggest_before_text_input_draw(monkeypatch):
+    # 2/6のsuggestが、st.text_inputの描画より前に復元されていることを確認する。
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_KEYWORD
+    article_ui._set_inputs_saved_value("suggest", "サジェストの保存値")
+
+    observed = {}
+
+    def fake_text_input(label, *args, **kwargs):
+        key = kwargs.get("key")
+        if key:
+            observed[key] = st.session_state.get(key, "")
+        return ""
+
+    monkeypatch.setattr(st, "text_input", fake_text_input)
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: False)
+
+    article_ui._render_page_2_keyword_and_detail_entry()
+
+    assert observed[KEYS["suggest"]] == "サジェストの保存値"

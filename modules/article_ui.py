@@ -626,6 +626,45 @@ def _sync_current_page_inputs_saved_from_widgets() -> None:
             _sync_widget_to_inputs_saved(field)
 
 
+def _restore_current_page_inputs_before_render(page: int) -> None:
+    """
+    本番デバッグ表示で確認された現象への対応：article__inputs_savedと
+    widget keyの両方に値が残っているにも関わらず、1/6へ戻った直後は
+    画面上の入力欄が空に見える。render_article_ui()側の復元
+    （_seed_widget_from_inputs_saved_if_missing等）はページ分岐より前に
+    呼んではいるが、この関数は各ページ関数の冒頭・st.text_area等を呼ぶ
+    直前でも同じ復元をもう一段掛け、復元とwidget描画の間に他の処理が
+    挟まる余地をなくすためのもの。
+
+    対象はARTICLE_INPUTS_SAVED_FIELDS_BY_PAGE[page]、つまり今まさに
+    描画するページの項目だけ。非表示ページの項目には一切触れない。
+
+    - widget keyが無い、または空文字の場合だけ復元する
+      （非空の場合は上書きしない＝入力中の値を壊さない）
+    - article__inputs_savedが空の場合はarticle__form_dataをフォールバックに使う
+
+    懸念（ゾンビ現象）：
+    「widget keyが空文字＝利用者が今まさに入力欄を空にした」場合と
+    「widget keyが空文字＝Streamlitの仕様でたまたま値が消えた」場合を
+    区別できないため、前者のケースでも古い値が復活してしまう
+    （消したはずの文章が戻る）。今回は「消える事故」を止めることを
+    優先し、この復元優先の挙動をあえて許容している。将来的に
+    「意図的に空にした」という意思表示（明示的なクリア操作フラグなど）を
+    別途持たない限り、この懸念は残り続ける。
+    """
+    fields = ARTICLE_INPUTS_SAVED_FIELDS_BY_PAGE.get(page, ())
+    for field in fields:
+        widget_key = KEYS[field]
+        current = str(st.session_state.get(widget_key, "") or "")
+        if not _is_blank(current):
+            continue
+        value = _get_inputs_saved_value(field)
+        if _is_blank(value):
+            value = _get_form_data_value(field)
+        if not _is_blank(value):
+            st.session_state[widget_key] = value
+
+
 def _ensure_ui_flags_initialized() -> None:
     for k in UI_FLAG_KEYS:
         if k not in st.session_state:
@@ -2879,6 +2918,7 @@ def _save_article_file(*, outputs_dir: str, body_text: str) -> tuple[bool, str]:
 
 
 def _render_page_1_basic() -> None:
+    _restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
     st.markdown("## 📝 かんたん記事作成")
     st.write("まずは2つだけで大丈夫です。")
 
@@ -2911,6 +2951,7 @@ def _render_page_1_basic() -> None:
 
 
 def _render_page_2_keyword_and_detail_entry() -> None:
+    _restore_current_page_inputs_before_render(ARTICLE_PAGE_KEYWORD)
     st.markdown("## 🔍 検索キーワード・詳細設定")
 
     st.markdown("### 3. 検索キーワード（任意）")
@@ -2946,6 +2987,7 @@ def _render_page_2_keyword_and_detail_entry() -> None:
 
 
 def _render_page_3_official_info() -> None:
+    _restore_current_page_inputs_before_render(ARTICLE_PAGE_OFFICIAL)
     st.markdown("## 📚 公式情報・確認先")
     st.caption("通常は空欄でも大丈夫です。分かる範囲だけ入力してください。")
 
@@ -3028,6 +3070,7 @@ def _render_page_3_official_info() -> None:
 
 
 def _render_page_4_writing_style() -> None:
+    _restore_current_page_inputs_before_render(ARTICLE_PAGE_STYLE)
     st.markdown("## ✏️ 書き方の希望")
     st.caption("通常は空欄でも大丈夫です。必要なときだけ入力してください。")
 
