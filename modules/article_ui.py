@@ -3253,6 +3253,106 @@ def render_article_ui(
     _backup_shadow_state()
     _sync_form_data_stage1_from_widgets()
 
+    _render_debug_inputs_saved_panel()
+
+
+# =========================
+# 開発用：入力保持デバッグ（原因特定用の一時機能）
+# =========================
+# 1/6〜4/6の入力材料12項目について、widget key・article__inputs_saved・
+# article__form_data・backup・shadowの各層に値が残っているかを本番画面で
+# 確認するための一時デバッグ表示。本文・APIキー・secrets・環境変数は
+# 一切表示せず、各値は先頭20文字のpreviewと文字数だけを表示する。
+# 原因特定が終わったら、この関数とその呼び出し・チェックボックスごと
+# 削除してよい（恒久機能ではない）。
+DEBUG_INPUTS_SAVED_TOGGLE_KEY = "article__debug_inputs_saved"
+_DEBUG_PREVIEW_CHARS = 20
+
+
+def _debug_preview_text(value: str) -> str:
+    text = str(value or "")
+    if len(text) <= _DEBUG_PREVIEW_CHARS:
+        return text
+    return text[:_DEBUG_PREVIEW_CHARS] + "…"
+
+
+def _debug_field_status(field: str) -> Dict[str, Any]:
+    widget_key = KEYS[field]
+
+    widget_present = widget_key in st.session_state
+    widget_value = str(st.session_state.get(widget_key, "") or "") if widget_present else ""
+    widget_state = "present" if (widget_present and not _is_blank(widget_value)) else (
+        "blank" if widget_present else "missing"
+    )
+
+    inputs_saved_value = _get_inputs_saved_value(field)
+    inputs_saved_state = "present" if not _is_blank(inputs_saved_value) else "blank"
+
+    form_data_value = _get_form_data_value(field)
+    form_data_state = "present" if not _is_blank(form_data_value) else "blank"
+
+    backup = st.session_state.get("article__input_backup")
+    backup_value = str(backup.get(widget_key, "") or "") if isinstance(backup, dict) else ""
+    has_backup = not _is_blank(backup_value)
+
+    shadow_key = SHADOW_KEYS.get(widget_key)
+    shadow_value = str(st.session_state.get(shadow_key, "") or "") if shadow_key else ""
+    has_shadow = not _is_blank(shadow_value)
+
+    if widget_state == "missing" and inputs_saved_state == "present":
+        judgement = "復元待ち状態"
+    elif widget_state == "blank" and inputs_saved_state == "present":
+        judgement = "reseed対象"
+    elif widget_state in ("missing", "blank") and inputs_saved_state == "blank" and form_data_state == "present":
+        judgement = "form_dataだけ残っている"
+    elif widget_state in ("missing", "blank") and inputs_saved_state == "blank" and form_data_state == "blank":
+        judgement = "正本が消えている"
+    elif widget_state == "present" and inputs_saved_state == "blank":
+        judgement = "on_change/ページ移動同期の失敗の可能性"
+    elif widget_state == "present" and inputs_saved_state == "present":
+        judgement = "正常候補"
+    else:
+        judgement = "-"
+
+    return {
+        "項目": field,
+        "widget key": widget_key,
+        "widgetキー有無": "あり" if widget_present else "なし",
+        "widget値": {"present": "非空", "blank": "空", "missing": "(キー無し)"}[widget_state],
+        "widget文字数": len(widget_value),
+        "widget先頭20文字": _debug_preview_text(widget_value),
+        "inputs_saved": "非空" if inputs_saved_state == "present" else "空",
+        "inputs_saved文字数": len(inputs_saved_value),
+        "inputs_saved先頭20文字": _debug_preview_text(inputs_saved_value),
+        "form_data": "非空" if form_data_state == "present" else "空",
+        "form_data文字数": len(form_data_value),
+        "form_data先頭20文字": _debug_preview_text(form_data_value),
+        "backup": "あり" if has_backup else "なし",
+        "shadow": "あり" if has_shadow else "なし",
+        "簡易判定": judgement,
+    }
+
+
+def _render_debug_inputs_saved_panel() -> None:
+    show_debug = st.checkbox("開発用デバッグを表示する", key=DEBUG_INPUTS_SAVED_TOGGLE_KEY)
+    if not show_debug:
+        return
+
+    with st.expander("開発用：入力保持デバッグ", expanded=True):
+        st.caption(
+            "本文・APIキー・secrets・環境変数は表示しません。"
+            "各値は先頭20文字のプレビューと文字数だけを表示します。"
+            "原因特定が終わったら削除する一時機能です。"
+        )
+
+        active_page = st.session_state.get(ARTICLE_ACTIVE_PAGE_KEY, "<未初期化>")
+        restored_page = st.session_state.get(ARTICLE_SHADOW_RESTORED_PAGE_KEY, "<未初期化>")
+        st.write(f"ARTICLE_ACTIVE_PAGE_KEY = {active_page}")
+        st.write(f"ARTICLE_SHADOW_RESTORED_PAGE_KEY = {restored_page}")
+
+        rows = [_debug_field_status(field) for field in ARTICLE_INPUTS_SAVED_STAGE1_FIELDS]
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
 
 def _render_page_5_draft(
     *,

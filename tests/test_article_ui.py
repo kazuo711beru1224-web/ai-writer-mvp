@@ -1937,3 +1937,98 @@ def test_clear_form_only_clears_inputs_saved_stage1_fields():
 
     for field in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
         assert article_ui._get_inputs_saved_value(field) == ""
+
+
+# =========================
+# 開発用：入力保持デバッグ（原因特定用の一時機能）
+# 1/6〜4/6の入力材料12項目について、widget key/inputs_saved/form_data/
+# backup/shadowの状態を本番画面で確認するための一時デバッグ表示。
+# APIキー・secrets・環境変数・本文全文は表示しない設計になっていることを確認する。
+# =========================
+
+def test_debug_preview_text_truncates_to_20_chars():
+    long_text = "あ" * 40
+    preview = article_ui._debug_preview_text(long_text)
+    assert preview != long_text
+    assert preview.startswith("あ" * 20)
+    assert len(preview) <= 21  # 20文字 + 省略記号1文字
+
+
+def test_debug_preview_text_does_not_truncate_short_text():
+    short_text = "短い値"
+    assert article_ui._debug_preview_text(short_text) == short_text
+
+
+def test_debug_field_status_covers_only_stage1_fields():
+    _reset_session_state()
+    rows = [article_ui._debug_field_status(field) for field in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS]
+
+    assert len(rows) == 12
+    assert {row["項目"] for row in rows} == set(article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS)
+
+    excluded_fields = {"copy_text", "evidence", "last_text", "plan_result", "copy_last_sig"}
+    assert excluded_fields.isdisjoint({row["項目"] for row in rows})
+
+
+def test_debug_field_status_widget_key_names_exclude_generated_text_fields():
+    excluded_widget_keys = {
+        KEYS["copy_text"], KEYS["evidence"], KEYS["last_text"],
+        KEYS["plan_result"], KEYS["copy_last_sig"],
+    }
+    for field in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+        row = article_ui._debug_field_status(field)
+        assert row["widget key"] not in excluded_widget_keys
+
+
+def test_debug_field_status_never_exposes_api_key():
+    _reset_session_state()
+    st.session_state["openai_api_key"] = "sk-should-not-leak"
+    st.session_state[KEYS["main_kw"]] = "テストキーワード"
+
+    row = article_ui._debug_field_status("main_kw")
+
+    for value in row.values():
+        assert "sk-should-not-leak" not in str(value)
+
+
+def test_debug_field_status_only_shows_preview_not_full_text():
+    _reset_session_state()
+    long_value = "個人情報を含む長い相談内容です。" * 5
+    st.session_state[KEYS["consult_situation"]] = long_value
+
+    row = article_ui._debug_field_status("consult_situation")
+
+    assert row["widget先頭20文字"] != long_value
+    assert len(row["widget先頭20文字"]) <= 21
+    assert row["widget文字数"] == len(long_value)
+
+
+def test_debug_panel_hidden_when_checkbox_unchecked(monkeypatch):
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+
+    dataframe_calls = []
+    monkeypatch.setattr(st, "checkbox", lambda label, **kwargs: False)
+    monkeypatch.setattr(st, "dataframe", lambda *a, **k: dataframe_calls.append((a, k)))
+
+    article_ui._render_debug_inputs_saved_panel()
+
+    assert dataframe_calls == []
+
+
+def test_debug_panel_shows_exactly_12_rows_when_checkbox_checked(monkeypatch):
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
+    for field in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+        article_ui._set_inputs_saved_value(field, f"value-{field}")
+
+    dataframe_calls = []
+    monkeypatch.setattr(st, "checkbox", lambda label, **kwargs: True)
+    monkeypatch.setattr(st, "dataframe", lambda *a, **k: dataframe_calls.append((a, k)))
+
+    article_ui._render_debug_inputs_saved_panel()
+
+    assert len(dataframe_calls) == 1
+    rows = dataframe_calls[0][0][0]
+    assert len(rows) == 12
+    assert {row["項目"] for row in rows} == set(article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS)
