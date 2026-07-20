@@ -2219,3 +2219,74 @@ def test_clear_form_only_also_clears_current_generation_display_keys():
 
     for field in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
         assert st.session_state[article_ui._get_display_widget_key(field)] == ""
+
+
+def test_generation_evidence_text_keeps_non_priority_term_facts_with_url_and_title():
+    # 本番調査で見つかった不具合の再現：URL・資料名を入力し、「大事な数字・
+    # 期限」に老齢厚生年金など_extract_key_fact_lines()のpriority_terms（
+    # ドメイン固有語）に一致しない文章を入れると、URL/資料名だけで
+    # important_rowsが非空になり、フォールバック（全行採用）が発動せず
+    # factsが丸ごと消えていた。分割入力がある場合はbuild_evidence_text()の
+    # 出力をそのまま使い、圧縮しないことを確認する。
+    _reset_session_state()
+    st.session_state[KEYS["evidence_url"]] = "https://www.saisoncard.co.jp/customer-support/"
+    st.session_state[KEYS["evidence_title"]] = "カスタマーサポート"
+    st.session_state[KEYS["evidence_facts"]] = (
+        "継続手数料2200円・1年間使用が無い場合に継続手数料が掛かる。"
+    )
+    st.session_state[KEYS["evidence_points"]] = ""
+
+    result = article_ui._get_generation_evidence_text()
+
+    assert "継続手数料2200円・1年間使用が無い場合に継続手数料が掛かる。" in result
+
+
+def test_generation_evidence_text_keeps_facts_when_points_is_blank():
+    _reset_session_state()
+    st.session_state[KEYS["evidence_url"]] = ""
+    st.session_state[KEYS["evidence_title"]] = ""
+    st.session_state[KEYS["evidence_facts"]] = "重要な事実の本文"
+    st.session_state[KEYS["evidence_points"]] = ""
+
+    result = article_ui._get_generation_evidence_text()
+
+    assert "重要な事実の本文" in result
+
+
+def test_generation_evidence_text_uses_build_evidence_text_output_as_is_when_split_mode():
+    _reset_session_state()
+    st.session_state[KEYS["evidence_url"]] = "https://example.com/info"
+    st.session_state[KEYS["evidence_title"]] = "資料タイトル"
+    st.session_state[KEYS["evidence_facts"]] = "本文A\n本文B"
+    st.session_state[KEYS["evidence_points"]] = "一番大事なこと"
+
+    expected = article_ui.build_evidence_text(
+        url="https://example.com/info",
+        title="資料タイトル",
+        facts="本文A\n本文B",
+        points="一番大事なこと",
+    ).strip()
+
+    result = article_ui._get_generation_evidence_text()
+
+    assert result == expected
+
+
+def test_generation_evidence_text_still_compacts_legacy_evidence_when_split_fields_blank():
+    # 分割欄がすべて空で旧統合フィールドevidenceだけが使われる場合は、
+    # 従来通り_extract_key_fact_lines()による圧縮を適用する（回帰確認）。
+    _reset_session_state()
+    st.session_state[KEYS["evidence_url"]] = ""
+    st.session_state[KEYS["evidence_title"]] = ""
+    st.session_state[KEYS["evidence_facts"]] = ""
+    st.session_state[KEYS["evidence_points"]] = ""
+    st.session_state[KEYS["evidence"]] = (
+        "老齢厚生年金の受給要件は、基礎控除の対象となる期限を含む。\n"
+        "ホーム > ページの先頭\n"
+        "無関係なノイズ行"
+    )
+
+    result = article_ui._get_generation_evidence_text()
+
+    assert "老齢厚生年金の受給要件は、基礎控除の対象となる期限を含む。" in result
+    assert "ホーム > ページの先頭" not in result

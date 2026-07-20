@@ -1046,6 +1046,16 @@ def _extract_key_fact_lines(text: str) -> List[str]:
 
 def _get_generation_evidence_text() -> str:
     raw = _get_effective_input_evidence_text()
+
+    # evidence_url/title/facts/pointsの分割欄に入力がある場合、rawは
+    # build_evidence_text()がそのまま組み立てた構造化テキスト（既に利用者が
+    # 厳選して入力した短い内容）のため、_extract_key_fact_lines()による
+    # 優先語ベースの圧縮・除外は行わない。優先語（老齢厚生年金・基礎控除等）
+    # に一致しない事実（例：継続手数料の金額）が生成前に丸ごと消えてしまう
+    # 事故を防ぐため。
+    if _has_any_split_evidence_input():
+        return raw.strip()
+
     compact_lines = _extract_key_fact_lines(raw)
     if compact_lines:
         return "\n".join(compact_lines).strip()
