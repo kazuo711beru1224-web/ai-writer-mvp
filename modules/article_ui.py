@@ -231,11 +231,6 @@ ARTICLE_PAGE_LABELS: Dict[int, str] = {
 # 画面表示専用の値なので、PERSIST_KEYSには含めない。
 ARTICLE_SHADOW_RESTORED_PAGE_KEY = "article__shadow_restored_page"
 
-# _rerun_once_after_page_input_restore()の無限rerun防止ガード。
-# 「直近でrerun判定を行った時点のページ番号」を記録する。画面表示専用の
-# 値なので、PERSIST_KEYSには含めない。
-ARTICLE_PRE_RENDER_RESTORE_RERUN_PAGE_KEY = "article__pre_render_restore_rerun_page"
-
 
 def _ensure_active_page_initialized() -> None:
     if ARTICLE_ACTIVE_PAGE_KEY not in st.session_state:
@@ -439,6 +434,140 @@ _INPUTS_SAVED_FIELD_BY_WIDGET_KEY: Dict[str, str] = {
     KEYS[field]: field for field in ARTICLE_INPUTS_SAVED_STAGE1_FIELDS
 }
 
+# =========================
+# 表示用widget key（世代番号付き）
+# =========================
+# 本番調査で、article__inputs_saved・旧KEYS[field]の両方に値が残っている
+# にも関わらず、ブラウザ側のst.text_area/st.text_inputの表示に反映されない
+# 現象が確認された（st.rerun()を挟んでも直らなかった）。原因は「同一の
+# 固定widget keyのままsession_stateだけを書き換えても、既にマウント済みの
+# フロントエンド側の表示までは追従しない」ことだと判断し、12項目だけ、
+# 固定のKEYS[field]ではなく世代番号付きの表示用widget key
+# （article__display__{field}__v{N}）をst.text_area/st.text_inputの
+# key=に使う方式に切り替える。復元が必要なとき「だけ」世代番号を+1し、
+# Streamlitに完全な新規widgetとして強制的に再マウントさせる。
+#
+# 旧KEYS[field]は、backup/shadow/snapshot/デバッグ表示・本文生成プロンプト
+# 構築など、既存コードからの参照が広範囲にあるため、表示には使わないが
+# 「互換ミラー」として値を書き続ける（on_change・復元・自動補助ボタン・
+# 入力欄を空にする操作のすべてから、同じ値をKEYS[field]にも反映する）。
+# article__inputs_savedが唯一の正本であることに変わりはない。
+ARTICLE_DISPLAY_KEY_GENERATION_KEY = "article__display_key_generation"
+
+
+def _ensure_article_display_key_generation() -> None:
+    if not isinstance(st.session_state.get(ARTICLE_DISPLAY_KEY_GENERATION_KEY), dict):
+        st.session_state[ARTICLE_DISPLAY_KEY_GENERATION_KEY] = {}
+
+
+def _get_display_key_generation(field: str) -> int:
+    _ensure_article_display_key_generation()
+    return int(st.session_state[ARTICLE_DISPLAY_KEY_GENERATION_KEY].get(field, 1))
+
+
+def _get_display_widget_key(field: str) -> str:
+    """
+    ARTICLE_INPUTS_SAVED_STAGE1_FIELDS（12項目）だけが対象。現在の世代番号を
+    使った表示用widget key（例：article__display__consult_situation__v1）を
+    返す。st.text_area/st.text_inputのkey=には、固定のKEYS[field]ではなく
+    必ずこちらを使う。
+    """
+    return f"article__display__{field}__v{_get_display_key_generation(field)}"
+
+
+def _bump_display_key_generation(field: str) -> str:
+    """
+    現在の世代番号を+1し、直前の世代の表示widget keyをsession_stateから
+    削除したうえで、新しい世代の表示widget keyを返す。表示widget keyは
+    正本ではない一時的な皿でしかないため、古い世代のkeyを残しておく理由が
+    なく、ここで削除する（ゴミの蓄積防止）。
+    """
+    _ensure_article_display_key_generation()
+    generations = st.session_state[ARTICLE_DISPLAY_KEY_GENERATION_KEY]
+    old_key = _get_display_widget_key(field)
+    generations[field] = _get_display_key_generation(field) + 1
+    st.session_state.pop(old_key, None)
+    return _get_display_widget_key(field)
+
+
+def _set_stage1_field_value(field: str, value: object) -> None:
+    """
+    on_change以外の場所（自動補助ボタン・レガシーデータの移行など）から
+    12項目の値を書き込むときに使う。article__inputs_saved（正本）・
+    article__form_data・旧KEYS[field]（互換ミラー）・現在世代の表示widget
+    keyのすべてに同じ値を反映し、画面にもそのまま反映されるようにする。
+    """
+    text = str(value or "")
+    _set_inputs_saved_value(field, text)
+    _set_form_data_value(field, text)
+    st.session_state[KEYS[field]] = text
+    st.session_state[_get_display_widget_key(field)] = text
+
+
+def _sync_display_widget_to_inputs_saved(field: str) -> None:
+    """
+    表示widget（_get_display_widget_key(field)）のon_changeから呼ぶ。
+    現在値をそのまま（空文字も含めて）article__inputs_saved（正本）へ
+    反映する。互換のため、article__form_dataと旧KEYS[field]（表示には
+    使わないミラー）にも同じ値を書く。
+    """
+    display_key = _get_display_widget_key(field)
+    value = st.session_state.get(display_key, "")
+    _set_inputs_saved_value(field, value)
+    _set_form_data_value(field, value)
+    st.session_state[KEYS[field]] = str(value or "")
+
+
+def _prepare_current_page_display_widgets_before_render(page: int) -> None:
+    """
+    本番調査で、article__inputs_saved・旧KEYS[field]（当時は固定widget
+    key）の両方に値が残っているにも関わらず、ブラウザ側のst.text_area/
+    st.text_inputの表示に反映されない現象が確認された。st.rerun()を挟む
+    方式でも直らなかったことから、原因は「同一の固定keyのままsession_state
+    だけを書き換えても、既にマウント済みのフロントエンド側widgetの表示までは
+    追従しない」ことだと判断した。この関数は、復元が必要なときだけ表示用
+    widget keyの世代番号を上げて、Streamlitに完全な新規widgetとして
+    強制的に再マウントさせる。
+
+    対象はARTICLE_INPUTS_SAVED_FIELDS_BY_PAGE[page]、つまり今まさに
+    描画するページの項目だけ。非表示ページの項目には一切触れない。
+
+    - 現在世代の表示widget keyがsession_stateに無い、または空文字の
+      場合だけ処理する（非空の場合はそのまま尊重し、世代も上げない＝
+      入力中の値を壊さない・typing中に副作用を起こさない）
+    - article__inputs_savedが空の場合はarticle__form_dataをフォールバックに使う
+    - 復元すべき値が実際にある場合だけ世代を+1し、旧世代keyを削除して、
+      新世代keyにその値をセットする（st.text_area/st.text_inputの
+      value=引数は使わない。新しい世代keyにsession_state側で値を
+      事前セットしてから同じ値をvalue=にも渡すと、Streamlitが
+      「default値とSession State APIの両方で値をセットした」という
+      警告を出すため、value=は使わずsession_state初期化だけで完結させる）
+    - 旧KEYS[field]にも同じ値を互換ミラーとして書く（backup/shadow/
+      snapshot/デバッグ表示・本文生成プロンプト構築など、KEYS[field]を
+      読む既存コードのため）
+
+    懸念（ゾンビ現象）：
+    「表示widget keyが空文字＝利用者が今まさに入力欄を空にした」場合と
+    「Streamlitの仕様でたまたま値が消えた」場合を区別できないため、
+    前者のケースでも古い値が復活してしまう（消したはずの文章が戻る）。
+    今回も「消える事故」を止めることを優先し、この復元優先の挙動を
+    あえて許容している。
+    """
+    fields = ARTICLE_INPUTS_SAVED_FIELDS_BY_PAGE.get(page, ())
+    for field in fields:
+        display_key = _get_display_widget_key(field)
+        current = str(st.session_state.get(display_key, "") or "")
+        if not _is_blank(current):
+            continue
+        value = _get_inputs_saved_value(field)
+        if _is_blank(value):
+            value = _get_form_data_value(field)
+        if _is_blank(value):
+            continue
+        new_key = _bump_display_key_generation(field)
+        st.session_state[new_key] = value
+        st.session_state[KEYS[field]] = value
+
 
 def _ensure_article_form_data() -> None:
     """
@@ -631,85 +760,6 @@ def _sync_current_page_inputs_saved_from_widgets() -> None:
             _sync_widget_to_inputs_saved(field)
 
 
-def _restore_current_page_inputs_before_render(page: int) -> bool:
-    """
-    本番デバッグ表示で確認された現象への対応：article__inputs_savedと
-    widget keyの両方に値が残っているにも関わらず、1/6へ戻った直後は
-    画面上の入力欄が空に見える。render_article_ui()側の復元
-    （_seed_widget_from_inputs_saved_if_missing等）はページ分岐より前に
-    呼んではいるが、この関数は各ページ関数の冒頭・st.text_area等を呼ぶ
-    直前でも同じ復元をもう一段掛け、復元とwidget描画の間に他の処理が
-    挟まる余地をなくすためのもの。
-
-    対象はARTICLE_INPUTS_SAVED_FIELDS_BY_PAGE[page]、つまり今まさに
-    描画するページの項目だけ。非表示ページの項目には一切触れない。
-
-    - widget keyが無い、または空文字の場合だけ復元する
-      （非空の場合は上書きしない＝入力中の値を壊さない）
-    - article__inputs_savedが空の場合はarticle__form_dataをフォールバックに使う
-
-    戻り値：この呼び出しで実際にwidget keyへ値を書き込んだ（復元した）
-    フィールドが1つでもあればTrue。呼び出し側（_rerun_once_after_page_input_restore）
-    が「復元が起きた場合だけrerunする」判定に使う。
-
-    懸念（ゾンビ現象）：
-    「widget keyが空文字＝利用者が今まさに入力欄を空にした」場合と
-    「widget keyが空文字＝Streamlitの仕様でたまたま値が消えた」場合を
-    区別できないため、前者のケースでも古い値が復活してしまう
-    （消したはずの文章が戻る）。今回は「消える事故」を止めることを
-    優先し、この復元優先の挙動をあえて許容している。将来的に
-    「意図的に空にした」という意思表示（明示的なクリア操作フラグなど）を
-    別途持たない限り、この懸念は残り続ける。
-    """
-    fields = ARTICLE_INPUTS_SAVED_FIELDS_BY_PAGE.get(page, ())
-    restored = False
-    for field in fields:
-        widget_key = KEYS[field]
-        current = str(st.session_state.get(widget_key, "") or "")
-        if not _is_blank(current):
-            continue
-        value = _get_inputs_saved_value(field)
-        if _is_blank(value):
-            value = _get_form_data_value(field)
-        if not _is_blank(value):
-            st.session_state[widget_key] = value
-            restored = True
-    return restored
-
-
-def _rerun_once_after_page_input_restore(page: int, restored: bool) -> None:
-    """
-    本番調査で、article__inputs_saved・widget keyの両方に値が残っている
-    にも関わらず、ブラウザ側のst.text_area/st.text_inputの表示が反映
-    されないケースが確認された。_restore_current_page_inputs_before_render()
-    が同じrun内でwidget keyへ値を書き込んでも、その値を使って
-    ブラウザ側の入力欄を新規に描画し直す（＝次のrunを素直に頭から
-    始めさせる）方が確実だと判断し、復元が実際に起きた場合だけ、
-    そのページの他のwidgetを描画する前に一度だけst.rerun()する。
-
-    無限rerun防止：
-    ARTICLE_PRE_RENDER_RESTORE_RERUN_PAGE_KEYに「直近でこの判定を
-    行ったページ番号」を記録する。
-    - 記録済みページ番号が現在のpageと同じ＝同じページ内の再実行
-      （st.rerun()自体によるrerun、または他のwidget操作によるrerun）
-      なので、今回はrerun判定そのものをスキップする（既に判定済み）。
-    - 記録済みページ番号が現在のpageと異なる＝新しい着地（初回訪問、
-      または一度別ページへ移った後の再訪問）。この場合は改めて判定し、
-      restored=Trueならrerunする。restoredの有無に関わらず、記録は
-      現在のpageで更新する（＝この着地を「判定済み」にする）。
-    これにより、同じページに何度も戻ってくるたびに毎回1回ずつだけ
-    rerunできる一方、同じ着地の中でrerun後に再度この関数が呼ばれても
-    （st.rerun()は即座にスクリプトを打ち切るため通常は起こらないが、
-    念のため）連続rerunにはならない。
-    """
-    guard_page = st.session_state.get(ARTICLE_PRE_RENDER_RESTORE_RERUN_PAGE_KEY)
-    if guard_page == page:
-        return
-    st.session_state[ARTICLE_PRE_RENDER_RESTORE_RERUN_PAGE_KEY] = page
-    if restored:
-        st.rerun()
-
-
 def _ensure_ui_flags_initialized() -> None:
     for k in UI_FLAG_KEYS:
         if k not in st.session_state:
@@ -887,19 +937,23 @@ def _migrate_legacy_keys_once() -> None:
         legacy_ev = str(st.session_state.get(KEYS["evidence"], "") or "")
         parsed_url, parsed_title, parsed_facts, parsed_points = _parse_legacy_evidence_sections(legacy_ev)
 
+        # evidence_url/title/facts/pointsはarticle__inputs_saved化した12項目
+        # なので、旧KEYS[field]だけでなく_set_stage1_field_value()経由で
+        # inputs_saved・表示widget keyにも同じ値を反映する（そうしないと、
+        # 表示widget keyを見るページ3の入力欄にレガシー移行結果が反映されない）。
         if parsed_url and _is_blank(st.session_state.get(KEYS["evidence_url"], "")):
-            st.session_state[KEYS["evidence_url"]] = parsed_url
+            _set_stage1_field_value("evidence_url", parsed_url)
         if parsed_title and _is_blank(st.session_state.get(KEYS["evidence_title"], "")):
-            st.session_state[KEYS["evidence_title"]] = parsed_title
+            _set_stage1_field_value("evidence_title", parsed_title)
         if parsed_facts and _is_blank(st.session_state.get(KEYS["evidence_facts"], "")):
-            st.session_state[KEYS["evidence_facts"]] = parsed_facts
+            _set_stage1_field_value("evidence_facts", parsed_facts)
         if parsed_points and _is_blank(st.session_state.get(KEYS["evidence_points"], "")):
-            st.session_state[KEYS["evidence_points"]] = parsed_points
+            _set_stage1_field_value("evidence_points", parsed_points)
 
         if _is_blank(st.session_state.get(KEYS["evidence_title"], "")):
             guessed_title = _guess_title_from_legacy_evidence(legacy_ev)
             if guessed_title:
-                st.session_state[KEYS["evidence_title"]] = guessed_title
+                _set_stage1_field_value("evidence_title", guessed_title)
 
     st.session_state[migrated_flag] = True
 
@@ -1277,6 +1331,12 @@ def _clear_form_only() -> None:
         KEYS["evidence"], KEYS["suggest"],
     ):
         st.session_state[k] = ""
+    # article__inputs_saved化した12項目は、実際にst.text_area/st.text_input
+    # のkey=に使っている現在世代の表示widget keyも揃えて空にする
+    # （旧KEYS[field]は互換ミラーでしかなく、表示widget key側を空に
+    # しないと画面の入力欄が空にならない）。
+    for field in ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+        st.session_state[_get_display_widget_key(field)] = ""
     _clear_article_input_backup()
     _clear_shadow_state()
     # widget key側で空にしたフィールドは、form_data側も揃えて空にする
@@ -1555,16 +1615,16 @@ def _ensure_basic_fields_from_standard_inputs() -> None:
     suggest = str(st.session_state.get(KEYS["suggest"], "") or "").strip()
 
     if _is_blank(st.session_state.get(KEYS["main_kw"], "")):
-        st.session_state[KEYS["main_kw"]] = _guess_main_kw_from_consult(situation, question)
+        _set_stage1_field_value("main_kw", _guess_main_kw_from_consult(situation, question))
 
     if _is_blank(st.session_state.get(KEYS["sub_kw"], "")):
-        st.session_state[KEYS["sub_kw"]] = suggest or _guess_suggest_from_consult(situation, question)
+        _set_stage1_field_value("sub_kw", suggest or _guess_suggest_from_consult(situation, question))
 
     if _is_blank(st.session_state.get(KEYS["theme"], "")):
-        st.session_state[KEYS["theme"]] = _guess_theme_from_consult(situation, question)
+        _set_stage1_field_value("theme", _guess_theme_from_consult(situation, question))
 
     if _is_blank(st.session_state.get(KEYS["memo"], "")):
-        st.session_state[KEYS["memo"]] = _guess_memo_from_consult(situation, question)
+        _set_stage1_field_value("memo", _guess_memo_from_consult(situation, question))
 
 
 def _apply_consult_to_article_inputs() -> bool:
@@ -1579,14 +1639,14 @@ def _apply_consult_to_article_inputs() -> bool:
         st.session_state[KEYS["save_message"]] = "相談内容が空のため、整理できませんでした。先に「今の状況」か「知りたいこと」を入力してください。"
         return False
 
-    st.session_state[KEYS["main_kw"]] = _guess_main_kw_from_consult(situation, question)
+    _set_stage1_field_value("main_kw", _guess_main_kw_from_consult(situation, question))
     guessed_suggest = _guess_suggest_from_consult(situation, question)
 
     # suggest は標準入力側の widget のため、ここでは上書きしない。
     current_suggest = str(st.session_state.get(KEYS["suggest"], "") or "").strip()
-    st.session_state[KEYS["sub_kw"]] = current_suggest or guessed_suggest
-    st.session_state[KEYS["theme"]] = _guess_theme_from_consult(situation, question)
-    st.session_state[KEYS["memo"]] = _guess_memo_from_consult(situation, question)
+    _set_stage1_field_value("sub_kw", current_suggest or guessed_suggest)
+    _set_stage1_field_value("theme", _guess_theme_from_consult(situation, question))
+    _set_stage1_field_value("memo", _guess_memo_from_consult(situation, question))
 
     st.session_state["article__show_detail_assist_hint"] = True
 
@@ -2963,32 +3023,26 @@ def _save_article_file(*, outputs_dir: str, body_text: str) -> tuple[bool, str]:
 
 
 def _render_page_1_basic() -> None:
-    _restored = _restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
-    _rerun_once_after_page_input_restore(ARTICLE_PAGE_BASIC, _restored)
+    _prepare_current_page_display_widgets_before_render(ARTICLE_PAGE_BASIC)
     st.markdown("## 📝 かんたん記事作成")
     st.write("まずは2つだけで大丈夫です。")
 
     st.markdown("### 1. 今の状況")
-    # article__form_data["consult_situation"]を正本にする。widget keyが
-    # 非表示ページで消えていた場合だけform_dataから流し込み、既にあれば
-    # 上書きしない（利用者が今まさに空にした値を復活させないため）。
-    _seed_widget_from_form_data_if_missing("consult_situation")
     st.text_area(
         "困っていることや背景を書いてください",
         height=120,
-        key=KEYS["consult_situation"],
-        on_change=_sync_widget_to_inputs_saved,
+        key=_get_display_widget_key("consult_situation"),
+        on_change=_sync_display_widget_to_inputs_saved,
         args=("consult_situation",),
     )
     st.caption("例：63歳会社員。給与28万円と賞与があり、年金がどう変わるか知りたい。")
 
     st.markdown("### 2. 知りたいこと")
-    _seed_widget_from_form_data_if_missing("consult_question")
     st.text_area(
         "何を知りたいか、どう判断したいかを書いてください",
         height=90,
-        key=KEYS["consult_question"],
-        on_change=_sync_widget_to_inputs_saved,
+        key=_get_display_widget_key("consult_question"),
+        on_change=_sync_display_widget_to_inputs_saved,
         args=("consult_question",),
     )
     st.caption("例：給与と賞与はどう合算されるか。今の基準額は何か。")
@@ -2997,8 +3051,7 @@ def _render_page_1_basic() -> None:
 
 
 def _render_page_2_keyword_and_detail_entry() -> None:
-    _restored = _restore_current_page_inputs_before_render(ARTICLE_PAGE_KEYWORD)
-    _rerun_once_after_page_input_restore(ARTICLE_PAGE_KEYWORD, _restored)
+    _prepare_current_page_display_widgets_before_render(ARTICLE_PAGE_KEYWORD)
     st.markdown("## 🔍 検索キーワード・詳細設定")
 
     st.markdown("### 3. 検索キーワード（任意）")
@@ -3006,11 +3059,10 @@ def _render_page_2_keyword_and_detail_entry() -> None:
         "検索キーワード、サジェストキーワード、関連キーワードなど、"
         "読者が検索しそうな言葉を入れてください。2〜5個くらいが目安です。空でも進められます。"
     )
-    _seed_widget_from_form_data_if_missing("suggest")
     st.text_input(
         "例：在職老齢年金, 支給停止, 65万円基準",
-        key=KEYS["suggest"],
-        on_change=_sync_widget_to_inputs_saved,
+        key=_get_display_widget_key("suggest"),
+        on_change=_sync_display_widget_to_inputs_saved,
         args=("suggest",),
     )
 
@@ -3034,8 +3086,7 @@ def _render_page_2_keyword_and_detail_entry() -> None:
 
 
 def _render_page_3_official_info() -> None:
-    _restored = _restore_current_page_inputs_before_render(ARTICLE_PAGE_OFFICIAL)
-    _rerun_once_after_page_input_restore(ARTICLE_PAGE_OFFICIAL, _restored)
+    _prepare_current_page_display_widgets_before_render(ARTICLE_PAGE_OFFICIAL)
     st.markdown("## 📚 公式情報・確認先")
     st.caption("通常は空欄でも大丈夫です。分かる範囲だけ入力してください。")
 
@@ -3053,11 +3104,10 @@ def _render_page_3_official_info() -> None:
     # article__form_dataへ即時同期するため（1/6ページのconsult_situation/
     # consult_questionと同じ方式）、反映ボタンを押さなくてもページ移動で
     # 値が消えない。
-    _seed_widget_from_form_data_if_missing("evidence_url")
     st.text_input(
         "すでに見つけた公式URL",
-        key=KEYS["evidence_url"],
-        on_change=_sync_widget_to_inputs_saved,
+        key=_get_display_widget_key("evidence_url"),
+        on_change=_sync_display_widget_to_inputs_saved,
         args=("evidence_url",),
     )
     st.caption(
@@ -3066,11 +3116,10 @@ def _render_page_3_official_info() -> None:
         "下の『書類名・検索語』に思いつく言葉だけ入れてください。"
     )
 
-    _seed_widget_from_form_data_if_missing("evidence_title")
     st.text_input(
         "すでに分かっている書類名・検索語",
-        key=KEYS["evidence_title"],
-        on_change=_sync_widget_to_inputs_saved,
+        key=_get_display_widget_key("evidence_title"),
+        on_change=_sync_display_widget_to_inputs_saved,
         args=("evidence_title",),
     )
     st.caption(
@@ -3078,22 +3127,20 @@ def _render_page_3_official_info() -> None:
         "例：資格確認書、年金事務所、在職老齢年金、代表社員変更、登記申請書"
     )
 
-    _seed_widget_from_form_data_if_missing("evidence_facts")
     st.text_area(
         "大事な数字・期限",
         height=90,
-        key=KEYS["evidence_facts"],
-        on_change=_sync_widget_to_inputs_saved,
+        key=_get_display_widget_key("evidence_facts"),
+        on_change=_sync_display_widget_to_inputs_saved,
         args=("evidence_facts",),
     )
     st.caption(_get_detail_help_text()["numbers"])
 
-    _seed_widget_from_form_data_if_missing("evidence_points")
     st.text_area(
         "このページでいちばん大事だったこと",
         height=120,
-        key=KEYS["evidence_points"],
-        on_change=_sync_widget_to_inputs_saved,
+        key=_get_display_widget_key("evidence_points"),
+        on_change=_sync_display_widget_to_inputs_saved,
         args=("evidence_points",),
     )
     st.caption(_get_detail_help_text()["memo"])
@@ -3118,8 +3165,7 @@ def _render_page_3_official_info() -> None:
 
 
 def _render_page_4_writing_style() -> None:
-    _restored = _restore_current_page_inputs_before_render(ARTICLE_PAGE_STYLE)
-    _rerun_once_after_page_input_restore(ARTICLE_PAGE_STYLE, _restored)
+    _prepare_current_page_display_widgets_before_render(ARTICLE_PAGE_STYLE)
     st.markdown("## ✏️ 書き方の希望")
     st.caption("通常は空欄でも大丈夫です。必要なときだけ入力してください。")
 
@@ -3131,21 +3177,19 @@ def _render_page_4_writing_style() -> None:
         st.caption("空でも進められます。必要なら補足してください。")
     elif show_assist_hint:
         st.caption("入力内容から自動補助しました。必要なら自由に直してください。")
-    _seed_widget_from_form_data_if_missing("memo")
     st.text_area(
         "読者や書き方のメモ",
         height=110,
-        key=KEYS["memo"],
-        on_change=_sync_widget_to_inputs_saved,
+        key=_get_display_widget_key("memo"),
+        on_change=_sync_display_widget_to_inputs_saved,
         args=("memo",),
     )
 
-    _seed_widget_from_form_data_if_missing("tone_reg")
     st.text_area(
         "トンマナ・レギュレーション（任意）",
         height=90,
-        key=KEYS["tone_reg"],
-        on_change=_sync_widget_to_inputs_saved,
+        key=_get_display_widget_key("tone_reg"),
+        on_change=_sync_display_widget_to_inputs_saved,
         args=("tone_reg",),
     )
     st.caption("トンマナ・レギュレーション：文体、禁止表現、言い回しのルールを書いてください。空欄なら標準設定で作成します。")
@@ -3157,33 +3201,30 @@ def _render_page_4_writing_style() -> None:
         main_kw = str(st.session_state.get(KEYS["main_kw"], "") or "").strip()
         if not main_kw:
             st.caption(f"候補：{_guess_main_kw_from_consult(str(st.session_state.get(KEYS['consult_situation'], '') or ''), str(st.session_state.get(KEYS['consult_question'], '') or ''))}")
-        _seed_widget_from_form_data_if_missing("main_kw")
         st.text_input(
             "この記事で中心にする言葉",
-            key=KEYS["main_kw"],
-            on_change=_sync_widget_to_inputs_saved,
+            key=_get_display_widget_key("main_kw"),
+            on_change=_sync_display_widget_to_inputs_saved,
             args=("main_kw",),
         )
 
         sub_kw = str(st.session_state.get(KEYS["sub_kw"], "") or "").strip()
         if not sub_kw:
             st.caption("候補：検索キーワードの内容や相談文から自動で考えます。必要なら入れてください。")
-        _seed_widget_from_form_data_if_missing("sub_kw")
         st.text_input(
             "一緒に入れたい関連語",
-            key=KEYS["sub_kw"],
-            on_change=_sync_widget_to_inputs_saved,
+            key=_get_display_widget_key("sub_kw"),
+            on_change=_sync_display_widget_to_inputs_saved,
             args=("sub_kw",),
         )
 
         theme = str(st.session_state.get(KEYS["theme"], "") or "").strip()
         if not theme:
             st.caption(f"候補：{_guess_theme_from_consult(str(st.session_state.get(KEYS['consult_situation'], '') or ''), str(st.session_state.get(KEYS['consult_question'], '') or ''))}")
-        _seed_widget_from_form_data_if_missing("theme")
         st.text_input(
             "記事の仮タイトル・方向性",
-            key=KEYS["theme"],
-            on_change=_sync_widget_to_inputs_saved,
+            key=_get_display_widget_key("theme"),
+            on_change=_sync_display_widget_to_inputs_saved,
             args=("theme",),
         )
 
@@ -3369,12 +3410,22 @@ def _debug_preview_text(value: str) -> str:
 
 
 def _debug_field_status(field: str) -> Dict[str, Any]:
-    widget_key = KEYS[field]
+    # 実際にst.text_area/st.text_inputのkey=に使っている、現在世代の
+    # 表示widget key（画面に本当に出ているのはこちら）。
+    display_key = _get_display_widget_key(field)
+    display_present = display_key in st.session_state
+    display_value = str(st.session_state.get(display_key, "") or "") if display_present else ""
+    display_state = "present" if (display_present and not _is_blank(display_value)) else (
+        "blank" if display_present else "missing"
+    )
 
-    widget_present = widget_key in st.session_state
-    widget_value = str(st.session_state.get(widget_key, "") or "") if widget_present else ""
-    widget_state = "present" if (widget_present and not _is_blank(widget_value)) else (
-        "blank" if widget_present else "missing"
+    # 旧KEYS[field]（互換ミラー。backup/shadow/snapshot・本文生成プロンプト
+    # 構築などが引き続き参照する）。widgetのkey=にはもう使っていない。
+    mirror_key = KEYS[field]
+    mirror_present = mirror_key in st.session_state
+    mirror_value = str(st.session_state.get(mirror_key, "") or "") if mirror_present else ""
+    mirror_state = "present" if (mirror_present and not _is_blank(mirror_value)) else (
+        "blank" if mirror_present else "missing"
     )
 
     inputs_saved_value = _get_inputs_saved_value(field)
@@ -3384,35 +3435,38 @@ def _debug_field_status(field: str) -> Dict[str, Any]:
     form_data_state = "present" if not _is_blank(form_data_value) else "blank"
 
     backup = st.session_state.get("article__input_backup")
-    backup_value = str(backup.get(widget_key, "") or "") if isinstance(backup, dict) else ""
+    backup_value = str(backup.get(mirror_key, "") or "") if isinstance(backup, dict) else ""
     has_backup = not _is_blank(backup_value)
 
-    shadow_key = SHADOW_KEYS.get(widget_key)
+    shadow_key = SHADOW_KEYS.get(mirror_key)
     shadow_value = str(st.session_state.get(shadow_key, "") or "") if shadow_key else ""
     has_shadow = not _is_blank(shadow_value)
 
-    if widget_state == "missing" and inputs_saved_state == "present":
-        judgement = "復元待ち状態"
-    elif widget_state == "blank" and inputs_saved_state == "present":
-        judgement = "reseed対象"
-    elif widget_state in ("missing", "blank") and inputs_saved_state == "blank" and form_data_state == "present":
+    if display_state == "missing" and inputs_saved_state == "present":
+        judgement = "復元待ち状態（次の描画で世代が上がる想定）"
+    elif display_state == "blank" and inputs_saved_state == "present":
+        judgement = "復元対象（次の描画で世代が上がる想定）"
+    elif display_state in ("missing", "blank") and inputs_saved_state == "blank" and form_data_state == "present":
         judgement = "form_dataだけ残っている"
-    elif widget_state in ("missing", "blank") and inputs_saved_state == "blank" and form_data_state == "blank":
+    elif display_state in ("missing", "blank") and inputs_saved_state == "blank" and form_data_state == "blank":
         judgement = "正本が消えている"
-    elif widget_state == "present" and inputs_saved_state == "blank":
+    elif display_state == "present" and inputs_saved_state == "blank":
         judgement = "on_change/ページ移動同期の失敗の可能性"
-    elif widget_state == "present" and inputs_saved_state == "present":
+    elif display_state == "present" and inputs_saved_state == "present":
         judgement = "正常候補"
     else:
         judgement = "-"
 
     return {
         "項目": field,
-        "widget key": widget_key,
-        "widgetキー有無": "あり" if widget_present else "なし",
-        "widget値": {"present": "非空", "blank": "空", "missing": "(キー無し)"}[widget_state],
-        "widget文字数": len(widget_value),
-        "widget先頭20文字": _debug_preview_text(widget_value),
+        "世代番号": _get_display_key_generation(field),
+        "表示widget key": display_key,
+        "表示widgetキー有無": "あり" if display_present else "なし",
+        "表示widget値": {"present": "非空", "blank": "空", "missing": "(キー無し)"}[display_state],
+        "表示widget文字数": len(display_value),
+        "表示widget先頭20文字": _debug_preview_text(display_value),
+        "旧KEYSミラー値": {"present": "非空", "blank": "空", "missing": "(キー無し)"}[mirror_state],
+        "旧KEYSミラー文字数": len(mirror_value),
         "inputs_saved": "非空" if inputs_saved_state == "present" else "空",
         "inputs_saved文字数": len(inputs_saved_value),
         "inputs_saved先頭20文字": _debug_preview_text(inputs_saved_value),

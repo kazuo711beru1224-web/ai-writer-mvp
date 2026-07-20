@@ -1149,18 +1149,21 @@ def test_form_scoped_fields_do_not_revive_when_form_data_is_also_blank():
 
 
 def test_form_scoped_fields_do_not_overwrite_widget_value_that_is_already_non_blank():
-    # widgetにすでに非空値が入っている場合（今まさに編集中）は、
+    # 表示widgetにすでに非空値が入っている場合（今まさに編集中）は、
     # form_dataの別の値で上書きしないことを確認する。
+    # （表示widget keyがst.text_area/st.text_inputの実際のkey=になった
+    #   ため、「編集中」はKEYS[field]ではなく表示widget keyで再現する）
     _reset_session_state()
     st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_OFFICIAL
     st.session_state[article_ui.ARTICLE_FORM_DATA_KEY] = {
         "evidence_url": "https://example.jp/old",
     }
-    st.session_state[KEYS["evidence_url"]] = "https://example.jp/new-being-typed"
+    display_key = article_ui._get_display_widget_key("evidence_url")
+    st.session_state[display_key] = "https://example.jp/new-being-typed"
 
     render_article_ui(**_common_kwargs())
 
-    assert st.session_state[KEYS["evidence_url"]] == "https://example.jp/new-being-typed"
+    assert st.session_state[display_key] == "https://example.jp/new-being-typed"
 
 
 def test_form_scoped_fields_still_restore_when_widget_key_is_fully_missing():
@@ -1202,11 +1205,11 @@ def test_official_info_page_evidence_fields_have_on_change_sync():
     source = inspect.getsource(article_ui._render_page_3_official_info)
     for field in ("evidence_url", "evidence_title", "evidence_facts", "evidence_points"):
         assert f'args=("{field}",)' in source
-    # 第1段階でarticle__inputs_saved化した12項目の一部のため、
-    # on_change先はarticle__inputs_saved同期関数に変わった
-    # （_sync_widget_to_inputs_savedは内部でarticle__form_dataにも書くため、
-    #   form_dataへの反映自体は引き続き行われる）。
-    assert source.count("on_change=_sync_widget_to_inputs_saved") == 4
+    # article__inputs_saved化した12項目のため、on_change先は表示widget
+    # 対応の同期関数（_sync_display_widget_to_inputs_saved）。内部で
+    # article__form_data・旧KEYS[field]（互換ミラー）にも書くため、
+    # form_dataへの反映自体は引き続き行われる。
+    assert source.count("on_change=_sync_display_widget_to_inputs_saved") == 4
 
 
 def test_evidence_fields_persist_to_form_data_without_pressing_apply_button():
@@ -1434,18 +1437,18 @@ def test_page2_suggest_field_has_on_change_sync():
     source = inspect.getsource(article_ui._render_page_2_keyword_and_detail_entry)
     for field in _PAGE2_ON_CHANGE_FIELDS:
         assert f'args=("{field}",)' in source
-    # 第1段階でarticle__inputs_saved化した12項目のため、
-    # on_change先はarticle__inputs_saved同期関数に変わった。
-    assert source.count("on_change=_sync_widget_to_inputs_saved") == len(_PAGE2_ON_CHANGE_FIELDS)
+    # article__inputs_saved化した12項目のため、on_change先は表示widget
+    # 対応の同期関数（_sync_display_widget_to_inputs_saved）に変わった。
+    assert source.count("on_change=_sync_display_widget_to_inputs_saved") == len(_PAGE2_ON_CHANGE_FIELDS)
 
 
 def test_page4_fields_have_on_change_sync():
     source = inspect.getsource(article_ui._render_page_4_writing_style)
     for field in _PAGE4_ON_CHANGE_FIELDS:
         assert f'args=("{field}",)' in source
-    # 第1段階でarticle__inputs_saved化した12項目のため、
-    # on_change先はarticle__inputs_saved同期関数に変わった。
-    assert source.count("on_change=_sync_widget_to_inputs_saved") == len(_PAGE4_ON_CHANGE_FIELDS)
+    # article__inputs_saved化した12項目のため、on_change先は表示widget
+    # 対応の同期関数（_sync_display_widget_to_inputs_saved）に変わった。
+    assert source.count("on_change=_sync_display_widget_to_inputs_saved") == len(_PAGE4_ON_CHANGE_FIELDS)
 
 
 def test_page2_and_page4_fields_persist_to_form_data_without_page_transition():
@@ -1561,18 +1564,21 @@ def test_non_form_fields_do_not_revive_when_form_data_is_also_blank():
 
 
 def test_non_form_fields_do_not_overwrite_widget_value_that_is_already_non_blank():
-    # widgetにすでに非空値が入っている場合（今まさに編集中）は、
+    # 表示widgetにすでに非空値が入っている場合（今まさに編集中）は、
     # form_dataの別の値で上書きしないことを確認する。
+    # （表示widget keyがst.text_area/st.text_inputの実際のkey=になった
+    #   ため、「編集中」はKEYS[field]ではなく表示widget keyで再現する）
     _reset_session_state()
     st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_STYLE
     st.session_state[article_ui.ARTICLE_FORM_DATA_KEY] = {
         "memo": "古いメモ",
     }
-    st.session_state[KEYS["memo"]] = "いま編集中のメモ"
+    display_key = article_ui._get_display_widget_key("memo")
+    st.session_state[display_key] = "いま編集中のメモ"
 
     render_article_ui(**_common_kwargs())
 
-    assert st.session_state[KEYS["memo"]] == "いま編集中のメモ"
+    assert st.session_state[display_key] == "いま編集中のメモ"
 
 
 def test_non_form_fields_still_restore_when_widget_key_is_fully_missing():
@@ -1977,7 +1983,7 @@ def test_debug_field_status_widget_key_names_exclude_generated_text_fields():
     }
     for field in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
         row = article_ui._debug_field_status(field)
-        assert row["widget key"] not in excluded_widget_keys
+        assert row["表示widget key"] not in excluded_widget_keys
 
 
 def test_debug_field_status_never_exposes_api_key():
@@ -1994,13 +2000,14 @@ def test_debug_field_status_never_exposes_api_key():
 def test_debug_field_status_only_shows_preview_not_full_text():
     _reset_session_state()
     long_value = "個人情報を含む長い相談内容です。" * 5
-    st.session_state[KEYS["consult_situation"]] = long_value
+    display_key = article_ui._get_display_widget_key("consult_situation")
+    st.session_state[display_key] = long_value
 
     row = article_ui._debug_field_status("consult_situation")
 
-    assert row["widget先頭20文字"] != long_value
-    assert len(row["widget先頭20文字"]) <= 21
-    assert row["widget文字数"] == len(long_value)
+    assert row["表示widget先頭20文字"] != long_value
+    assert len(row["表示widget先頭20文字"]) <= 21
+    assert row["表示widget文字数"] == len(long_value)
 
 
 def test_debug_panel_hidden_when_checkbox_unchecked(monkeypatch):
@@ -2035,195 +2042,180 @@ def test_debug_panel_shows_exactly_12_rows_when_checkbox_checked(monkeypatch):
 
 
 # =========================
-# ページ描画前の入力復元（本番調査：widget/inputs_savedの両方に値が
-# 残っているのに画面の入力欄が空に見える現象への対応）
+# 世代番号付き表示widget key（本番調査：widget/inputs_savedの両方に値が
+# 残っているのに画面の入力欄が空に見える現象がst.rerun()方式でも直らず、
+# 同一固定keyのままではブラウザ側の表示が追従しないと判断したための対応）
 # =========================
 
-def test_restore_current_page_inputs_before_render_fills_blank_widget():
+def test_get_display_widget_key_returns_generation_numbered_key():
     _reset_session_state()
-    article_ui._set_inputs_saved_value("consult_situation", "相談内容の続き")
-    st.session_state[KEYS["consult_situation"]] = ""
-
-    article_ui._restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
-
-    assert st.session_state[KEYS["consult_situation"]] == "相談内容の続き"
+    assert article_ui._get_display_widget_key("consult_situation") == "article__display__consult_situation__v1"
+    assert article_ui._get_display_key_generation("consult_situation") == 1
 
 
-def test_restore_current_page_inputs_before_render_fills_missing_widget():
+def test_prepare_current_page_display_widgets_bumps_generation_only_when_restoring():
+    _reset_session_state()
+    article_ui._set_inputs_saved_value("consult_situation", "続きの相談内容")
+
+    assert article_ui._get_display_key_generation("consult_situation") == 1
+    article_ui._prepare_current_page_display_widgets_before_render(ARTICLE_PAGE_BASIC)
+    assert article_ui._get_display_key_generation("consult_situation") == 2
+
+
+def test_prepare_current_page_display_widgets_does_not_bump_generation_when_display_key_non_blank():
+    # typing中（表示widget keyが非空）は、世代を上げない＝副作用を起こさない。
+    _reset_session_state()
+    display_key = article_ui._get_display_widget_key("consult_situation")
+    st.session_state[display_key] = "入力中の値"
+    article_ui._set_inputs_saved_value("consult_situation", "別の保存値")
+
+    article_ui._prepare_current_page_display_widgets_before_render(ARTICLE_PAGE_BASIC)
+
+    assert article_ui._get_display_key_generation("consult_situation") == 1
+    assert st.session_state[display_key] == "入力中の値"
+
+
+def test_prepare_current_page_display_widgets_deletes_old_generation_key():
+    _reset_session_state()
+    old_key = article_ui._get_display_widget_key("consult_situation")
+    st.session_state[old_key] = ""
+    article_ui._set_inputs_saved_value("consult_situation", "続きの相談内容")
+
+    article_ui._prepare_current_page_display_widgets_before_render(ARTICLE_PAGE_BASIC)
+
+    new_key = article_ui._get_display_widget_key("consult_situation")
+    assert new_key != old_key
+    assert old_key not in st.session_state
+    assert st.session_state[new_key] == "続きの相談内容"
+
+
+def test_prepare_current_page_display_widgets_seeds_new_generation_from_inputs_saved():
     _reset_session_state()
     article_ui._set_inputs_saved_value("consult_question", "知りたいことの続き")
-    assert KEYS["consult_question"] not in st.session_state
 
-    article_ui._restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
+    article_ui._prepare_current_page_display_widgets_before_render(ARTICLE_PAGE_BASIC)
 
+    new_key = article_ui._get_display_widget_key("consult_question")
+    assert st.session_state[new_key] == "知りたいことの続き"
+    # 互換ミラーの旧KEYS[field]にも同じ値が反映される。
     assert st.session_state[KEYS["consult_question"]] == "知りたいことの続き"
 
 
-def test_restore_current_page_inputs_before_render_does_not_overwrite_non_blank_widget():
+def test_prepare_current_page_display_widgets_falls_back_to_form_data():
     _reset_session_state()
-    article_ui._set_inputs_saved_value("consult_situation", "古い保存値")
-    st.session_state[KEYS["consult_situation"]] = "今まさに入力中の値"
+    article_ui._set_form_data_value("consult_question", "form_dataだけにある値")
 
-    article_ui._restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
+    article_ui._prepare_current_page_display_widgets_before_render(ARTICLE_PAGE_BASIC)
 
-    assert st.session_state[KEYS["consult_situation"]] == "今まさに入力中の値"
+    new_key = article_ui._get_display_widget_key("consult_question")
+    assert st.session_state[new_key] == "form_dataだけにある値"
 
 
-def test_restore_current_page_inputs_before_render_only_touches_current_page_fields():
+def test_prepare_current_page_display_widgets_only_touches_current_page_fields():
     _reset_session_state()
-    # suggestは2/6の項目。1/6分の復元を呼んでも触らないことを確認する。
+    # suggestは2/6の項目。1/6分の準備を呼んでも触らないことを確認する。
     article_ui._set_inputs_saved_value("suggest", "サジェストの値")
 
-    article_ui._restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
+    article_ui._prepare_current_page_display_widgets_before_render(ARTICLE_PAGE_BASIC)
 
-    assert KEYS["suggest"] not in st.session_state
+    assert "article__display__suggest__v1" not in st.session_state
+    assert article_ui._get_display_key_generation("suggest") == 1
 
 
-def test_page_1_restores_consult_fields_before_text_area_draw(monkeypatch):
-    # 1/6のconsult_situation/consult_questionが、st.text_areaの描画（呼び出し）
-    # より前に復元されていることを確認する。fake_text_areaはst.text_area
-    # 呼び出し時点のsession_state値を記録するため、記録値が復元後の値なら
-    # 「描画前に復元済み」であることの証明になる。
+def test_prepare_current_page_display_widgets_never_touches_out_of_scope_fields():
+    # copy_text/evidence/last_text/plan_result/copy_last_sigは
+    # ARTICLE_INPUTS_SAVED_FIELDS_BY_PAGEに含まれないため対象外。
+    _reset_session_state()
+    for page in (ARTICLE_PAGE_BASIC, ARTICLE_PAGE_KEYWORD, ARTICLE_PAGE_OFFICIAL, ARTICLE_PAGE_STYLE):
+        article_ui._prepare_current_page_display_widgets_before_render(page)
+    for field in ("copy_text", "evidence", "last_text", "plan_result", "copy_last_sig"):
+        assert f"article__display__{field}__v1" not in st.session_state
+
+
+def test_sync_display_widget_to_inputs_saved_updates_inputs_saved_form_data_and_mirror():
+    _reset_session_state()
+    display_key = article_ui._get_display_widget_key("theme")
+    st.session_state[display_key] = "新しいテーマ"
+
+    article_ui._sync_display_widget_to_inputs_saved("theme")
+
+    assert article_ui._get_inputs_saved_value("theme") == "新しいテーマ"
+    assert article_ui._get_form_data_value("theme") == "新しいテーマ"
+    assert st.session_state[KEYS["theme"]] == "新しいテーマ"
+
+
+def test_page_1_renders_consult_fields_with_display_widget_key(monkeypatch):
     _reset_session_state()
     st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_BASIC
-    article_ui._set_inputs_saved_value("consult_situation", "状況の保存値")
-    article_ui._set_inputs_saved_value("consult_question", "質問の保存値")
 
-    observed = {}
+    observed_keys = []
 
     def fake_text_area(label, *args, **kwargs):
-        key = kwargs.get("key")
-        if key:
-            observed[key] = st.session_state.get(key, "")
+        observed_keys.append(kwargs.get("key"))
         return ""
 
-    rerun_calls = []
     monkeypatch.setattr(st, "text_area", fake_text_area)
-    monkeypatch.setattr(st, "rerun", lambda: rerun_calls.append(1))
 
     article_ui._render_page_1_basic()
 
-    assert observed[KEYS["consult_situation"]] == "状況の保存値"
-    assert observed[KEYS["consult_question"]] == "質問の保存値"
-    # 復元が実際に起きたので、st.rerun()が1回だけ呼ばれる
-    assert len(rerun_calls) == 1
+    assert article_ui._get_display_widget_key("consult_situation") in observed_keys
+    assert article_ui._get_display_widget_key("consult_question") in observed_keys
+    assert KEYS["consult_situation"] not in observed_keys
+    assert KEYS["consult_question"] not in observed_keys
 
 
-def test_page_2_restores_suggest_before_text_input_draw(monkeypatch):
-    # 2/6のsuggestが、st.text_inputの描画より前に復元されていることを確認する。
+def test_page_2_renders_suggest_with_display_widget_key(monkeypatch):
     _reset_session_state()
     st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_KEYWORD
-    article_ui._set_inputs_saved_value("suggest", "サジェストの保存値")
 
-    observed = {}
+    observed_keys = []
 
     def fake_text_input(label, *args, **kwargs):
-        key = kwargs.get("key")
-        if key:
-            observed[key] = st.session_state.get(key, "")
+        observed_keys.append(kwargs.get("key"))
         return ""
 
-    rerun_calls = []
     monkeypatch.setattr(st, "text_input", fake_text_input)
     monkeypatch.setattr(st, "button", lambda label, **kwargs: False)
-    monkeypatch.setattr(st, "rerun", lambda: rerun_calls.append(1))
 
     article_ui._render_page_2_keyword_and_detail_entry()
 
-    assert observed[KEYS["suggest"]] == "サジェストの保存値"
-    # 復元が実際に起きたので、st.rerun()が1回だけ呼ばれる
-    assert len(rerun_calls) == 1
+    assert article_ui._get_display_widget_key("suggest") in observed_keys
+    assert KEYS["suggest"] not in observed_keys
 
 
-# =========================
-# 復元発生時の一度だけのrerun（本番調査：session_stateは復元済みなのに
-# ブラウザ側のwidget表示に反映されないケースへの対応）
-# =========================
-
-def test_restore_current_page_inputs_before_render_returns_true_when_restored():
+def test_debug_field_status_reflects_current_generation_display_key():
     _reset_session_state()
-    article_ui._set_inputs_saved_value("consult_situation", "相談内容の続き")
-    st.session_state[KEYS["consult_situation"]] = ""
+    article_ui._set_inputs_saved_value("consult_situation", "続きの相談内容")
+    article_ui._prepare_current_page_display_widgets_before_render(ARTICLE_PAGE_BASIC)
 
-    restored = article_ui._restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
+    row = article_ui._debug_field_status("consult_situation")
 
-    assert restored is True
-    assert st.session_state[KEYS["consult_situation"]] == "相談内容の続き"
+    assert row["世代番号"] == 2
+    assert row["表示widget key"] == article_ui._get_display_widget_key("consult_situation")
+    assert row["表示widget値"] == "非空"
+    assert row["表示widget先頭20文字"] == "続きの相談内容"
 
 
-def test_restore_current_page_inputs_before_render_returns_false_when_nothing_to_restore():
+def test_prepare_current_page_display_widgets_no_side_effect_while_typing():
+    # 復元不要時（表示widget keyが非空）は、何度呼んでも世代・値が
+    # 変わらないことを確認する（typing中の副作用防止）。
     _reset_session_state()
-    st.session_state[KEYS["consult_situation"]] = "入力中の値"
-    st.session_state[KEYS["consult_question"]] = "入力中の値2"
+    display_key = article_ui._get_display_widget_key("consult_situation")
+    st.session_state[display_key] = "た"
+    article_ui._set_inputs_saved_value("consult_situation", "た")
 
-    restored = article_ui._restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
+    for _ in range(3):
+        article_ui._prepare_current_page_display_widgets_before_render(ARTICLE_PAGE_BASIC)
+        assert article_ui._get_display_key_generation("consult_situation") == 1
+        assert st.session_state[display_key] == "た"
 
-    assert restored is False
 
-
-def test_restore_current_page_inputs_before_render_returns_false_when_page_has_no_saved_values():
+def test_clear_form_only_also_clears_current_generation_display_keys():
     _reset_session_state()
+    for field in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+        st.session_state[article_ui._get_display_widget_key(field)] = f"value-{field}"
 
-    restored = article_ui._restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
+    article_ui._clear_form_only()
 
-    assert restored is False
-
-
-def test_rerun_guard_fires_once_then_skips_on_same_page(monkeypatch):
-    _reset_session_state()
-    rerun_calls = []
-    monkeypatch.setattr(st, "rerun", lambda: rerun_calls.append(1))
-
-    article_ui._rerun_once_after_page_input_restore(ARTICLE_PAGE_BASIC, True)
-    assert len(rerun_calls) == 1
-    assert st.session_state[article_ui.ARTICLE_PRE_RENDER_RESTORE_RERUN_PAGE_KEY] == ARTICLE_PAGE_BASIC
-
-    # 同じページで復元がもう一度起きたことになっても、既にこのページの
-    # 着地判定は済んでいるためrerunしない（無限rerun防止）。
-    article_ui._rerun_once_after_page_input_restore(ARTICLE_PAGE_BASIC, True)
-    assert len(rerun_calls) == 1
-
-
-def test_rerun_guard_does_not_rerun_when_nothing_restored(monkeypatch):
-    _reset_session_state()
-    rerun_calls = []
-    monkeypatch.setattr(st, "rerun", lambda: rerun_calls.append(1))
-
-    article_ui._rerun_once_after_page_input_restore(ARTICLE_PAGE_BASIC, False)
-
-    assert rerun_calls == []
-
-
-def test_rerun_guard_allows_fresh_rerun_after_revisiting_same_page(monkeypatch):
-    # 1/6→2/6→1/6と移動して戻ってきたとき（本番で報告された往復パターン）、
-    # 2/6滞在中に復元が起きなくても、1/6への再訪問では改めて1回だけ
-    # rerunできることを確認する。
-    _reset_session_state()
-    rerun_calls = []
-    monkeypatch.setattr(st, "rerun", lambda: rerun_calls.append(1))
-
-    article_ui._rerun_once_after_page_input_restore(ARTICLE_PAGE_BASIC, True)
-    assert len(rerun_calls) == 1
-
-    article_ui._rerun_once_after_page_input_restore(ARTICLE_PAGE_KEYWORD, False)
-    assert len(rerun_calls) == 1
-
-    article_ui._rerun_once_after_page_input_restore(ARTICLE_PAGE_BASIC, True)
-    assert len(rerun_calls) == 2
-
-
-def test_non_blank_widget_is_not_overwritten_and_does_not_trigger_rerun(monkeypatch):
-    _reset_session_state()
-    article_ui._set_inputs_saved_value("consult_situation", "古い保存値")
-    st.session_state[KEYS["consult_situation"]] = "今まさに入力中の値"
-    st.session_state[KEYS["consult_question"]] = "今まさに入力中の値2"
-
-    rerun_calls = []
-    monkeypatch.setattr(st, "rerun", lambda: rerun_calls.append(1))
-
-    restored = article_ui._restore_current_page_inputs_before_render(ARTICLE_PAGE_BASIC)
-    article_ui._rerun_once_after_page_input_restore(ARTICLE_PAGE_BASIC, restored)
-
-    assert restored is False
-    assert st.session_state[KEYS["consult_situation"]] == "今まさに入力中の値"
-    assert rerun_calls == []
+    for field in article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS:
+        assert st.session_state[article_ui._get_display_widget_key(field)] == ""
