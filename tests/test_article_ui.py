@@ -2324,6 +2324,9 @@ def test_build_writing_prompt_includes_money_contract_caution_rules_for_saison_c
     assert "断定しすぎないでください" in prompt
     assert "問い合わせて確認するのが安全です" in prompt
     assert "根拠に明記されていない限り断定しないでください" in prompt
+    assert "根拠に明記されていない専門用語・制度用語・原因説明を勝手に作らないでください" in prompt
+    assert "休眠状態" in prompt
+    assert "顧客の責任" in prompt
 
 
 def test_build_writing_prompt_does_not_include_money_contract_rules_for_low_risk_topic():
