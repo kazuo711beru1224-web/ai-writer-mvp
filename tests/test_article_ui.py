@@ -2380,3 +2380,187 @@ def test_build_writing_prompt_still_includes_forecast_rules_and_excludes_money_r
 
     assert "【今後の見通しテーマの追加ルール】" in prompt
     assert "【お金・契約テーマの追加ルール】" not in prompt
+
+
+# =========================
+# お金・契約テーマ：根拠外の制度用語の保存前ブロック
+# =========================
+
+def test_money_contract_terms_not_in_evidence_detects_term_missing_from_evidence():
+    result = article_ui._money_contract_terms_not_in_evidence(
+        generated_text="一般的には、カード会社に異議申し立てを行うことで、対象となる場合があります。",
+        evidence_text="継続手数料は年1回、税込2200円。",
+    )
+    assert result == ["異議申し立て"]
+
+
+def test_money_contract_terms_not_in_evidence_excludes_term_present_in_both():
+    result = article_ui._money_contract_terms_not_in_evidence(
+        generated_text="一般的には、カード会社に異議申し立てを行うことで、対象となる場合があります。",
+        evidence_text="異議申し立てができる場合があると規約に明記されている。",
+    )
+    assert result == []
+
+
+def test_money_contract_terms_not_in_evidence_returns_empty_when_term_not_in_body():
+    result = article_ui._money_contract_terms_not_in_evidence(
+        generated_text="継続手数料は年1回、税込2200円が請求される場合があります。",
+        evidence_text="継続手数料は年1回、税込2200円。",
+    )
+    assert result == []
+
+
+def test_money_contract_terms_not_in_evidence_detects_multiple_terms_at_once():
+    result = article_ui._money_contract_terms_not_in_evidence(
+        generated_text=(
+            "休眠状態のカードは顧客の責任で管理する必要があるとされ、"
+            "異議申し立ても行えるとされています。"
+        ),
+        evidence_text="継続手数料は年1回、税込2200円。",
+    )
+    assert result == ["異議申し立て", "休眠状態", "顧客の責任"]
+
+
+def _fake_generate_markdown_two_calls(plan_text: str, body_text: str):
+    calls = {"n": 0}
+
+    def fake(**kwargs):
+        calls["n"] += 1
+        return plan_text if calls["n"] == 1 else body_text
+
+    return fake
+
+
+_SAISON_UNGROUNDED_BODY = (
+    "一般的には、カード会社に異議申し立てを行うことで、対象となる場合があります。"
+)
+
+
+def _set_saison_money_contract_inputs():
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_DRAFT
+    st.session_state[KEYS["consult_situation"]] = "セゾンカードをほとんど使っていません。"
+    st.session_state[KEYS["consult_question"]] = "継続手数料はどんな時に請求されますか。"
+    st.session_state[KEYS["main_kw"]] = "セゾンカード 継続手数料"
+    st.session_state[KEYS["evidence_facts"]] = "継続手数料は年1回、税込2200円。"
+
+
+def test_generate_draft_blocks_save_when_money_contract_term_is_ungrounded(monkeypatch):
+    _reset_session_state()
+    _set_saison_money_contract_inputs()
+
+    warnings = []
+    monkeypatch.setattr(st, "warning", lambda text: warnings.append(text))
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: label == "✨ 下書きを作る")
+    monkeypatch.setattr(
+        article_ui,
+        "generate_markdown",
+        _fake_generate_markdown_two_calls("## 見出し1\n## 見出し2", _SAISON_UNGROUNDED_BODY),
+    )
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["last_text"]] == ""
+    assert st.session_state[KEYS["copy_text"]] == ""
+    assert article_ui._get_form_data_value("last_text") == ""
+    assert article_ui._get_form_data_value("copy_text") == ""
+    assert st.session_state[KEYS["plan_result"]] == ""
+    assert st.session_state[KEYS["proof_evidence"]] == ""
+    assert st.session_state[KEYS["proof_evidence_compact"]] == ""
+    assert st.session_state[KEYS["money_contract_block_terms"]] == "異議申し立て"
+
+
+def test_generate_draft_block_warning_shows_detected_term_and_old_draft_notice(monkeypatch):
+    _reset_session_state()
+    _set_saison_money_contract_inputs()
+
+    warnings = []
+    monkeypatch.setattr(st, "warning", lambda text: warnings.append(text))
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: label == "✨ 下書きを作る")
+    monkeypatch.setattr(
+        article_ui,
+        "generate_markdown",
+        _fake_generate_markdown_two_calls("## 見出し1\n## 見出し2", _SAISON_UNGROUNDED_BODY),
+    )
+
+    render_article_ui(**_common_kwargs())
+
+    assert any("異議申し立て" in w for w in warnings)
+    assert any("それ以前に保存された下書き" in w for w in warnings)
+    # 内部用語は画面に出さない
+    assert not any("ブロック" in w for w in warnings)
+    assert not any("session_state" in w for w in warnings)
+
+
+def test_generate_draft_saves_normally_when_money_contract_term_is_grounded(monkeypatch):
+    _reset_session_state()
+    _set_saison_money_contract_inputs()
+    st.session_state[KEYS["evidence_points"]] = "異議申し立てができる場合があると規約に明記されている。"
+
+    monkeypatch.setattr(st, "warning", lambda text: None)
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: label == "✨ 下書きを作る")
+    monkeypatch.setattr(
+        article_ui,
+        "generate_markdown",
+        _fake_generate_markdown_two_calls("## 見出し1\n## 見出し2", _SAISON_UNGROUNDED_BODY),
+    )
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["last_text"]] == _SAISON_UNGROUNDED_BODY
+    assert article_ui._get_form_data_value("last_text") == _SAISON_UNGROUNDED_BODY
+    assert st.session_state[KEYS["money_contract_block_terms"]] == ""
+
+
+def test_generate_draft_does_not_block_for_non_money_contract_topic(monkeypatch):
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_DRAFT
+    st.session_state[KEYS["consult_situation"]] = "掃除機の吸引力が落ちてきました。"
+    st.session_state[KEYS["consult_question"]] = "掃除機のお手入れのコツを知りたいです。"
+    st.session_state[KEYS["main_kw"]] = "掃除機 お手入れ"
+
+    monkeypatch.setattr(st, "warning", lambda text: None)
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: label == "✨ 下書きを作る")
+    monkeypatch.setattr(
+        article_ui,
+        "generate_markdown",
+        _fake_generate_markdown_two_calls(
+            "## 見出し1\n## 見出し2",
+            "フィルターの異議申し立てという言葉が偶然入った本文です。",
+        ),
+    )
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["last_text"]] != ""
+    assert st.session_state[KEYS["money_contract_block_terms"]] == ""
+
+
+def test_generate_draft_keeps_old_last_text_when_new_attempt_is_blocked(monkeypatch):
+    _reset_session_state()
+    _set_saison_money_contract_inputs()
+    st.session_state[KEYS["last_text"]] = "以前保存された安全な下書き"
+    article_ui._set_form_data_value("last_text", "以前保存された安全な下書き")
+
+    monkeypatch.setattr(st, "warning", lambda text: None)
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: label == "✨ 下書きを作る")
+    monkeypatch.setattr(
+        article_ui,
+        "generate_markdown",
+        _fake_generate_markdown_two_calls("## 見出し1\n## 見出し2", _SAISON_UNGROUNDED_BODY),
+    )
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["last_text"]] == "以前保存された安全な下書き"
+    assert article_ui._get_form_data_value("last_text") == "以前保存された安全な下書き"
+
+
+def test_clear_generated_only_clears_money_contract_block_terms():
+    _reset_session_state()
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_PRECHECK
+    st.session_state[KEYS["money_contract_block_terms"]] = "異議申し立て"
+    render_article_ui(**_common_kwargs())
+
+    article_ui._clear_generated_only()
+
+    assert st.session_state[KEYS["money_contract_block_terms"]] == ""

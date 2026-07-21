@@ -53,6 +53,11 @@ KEYS: Dict[str, str] = {
     "plan_result": "article__plan_result",
 
     "save_message": "article__save_message",
+
+    # 直前の生成試行で検出した、お金・契約テーマの根拠外用語（保存前チェック）。
+    # 生成結果そのものではなく画面表示専用の一時状態のため、PERSIST_KEYS・
+    # 自動保存・入力スナップショットの対象には含めない。
+    "money_contract_block_terms": "article__money_contract_block_terms",
 }
 
 PERSIST_KEYS: Set[str] = {
@@ -167,6 +172,14 @@ MONEY_CONTRACT_KW: Tuple[str, ...] = (
     "手数料", "返金", "契約", "解約", "請求", "カード", "クレジットカード",
     "年会費", "違約金", "キャンセル料", "引き落とし", "支払い", "払い戻し",
     "異議申し立て", "継続手数料",
+)
+
+# MONEY_CONTRACT_KW（テーマ判定用）とは別用途：お金・契約テーマの生成後、
+# 本文にあって根拠に無ければ保存前にブロックする「根拠が必須の制度用語」。
+_MONEY_CONTRACT_UNGROUNDED_TERMS: Tuple[str, ...] = (
+    "異議申し立て",
+    "休眠状態",
+    "顧客の責任",
 )
 
 NEWS_RECENCY_KW: Tuple[str, ...] = (
@@ -1378,6 +1391,7 @@ def _clear_generated_only() -> None:
     for k in (
         KEYS["last_text"], KEYS["plan_result"],
         KEYS["proof_evidence"], KEYS["proof_evidence_compact"], KEYS["proof_suggest"], KEYS["proof_memo"],
+        KEYS["money_contract_block_terms"],
     ):
         st.session_state[k] = ""
 
@@ -1975,6 +1989,17 @@ def _is_insurance_topic() -> bool:
 def _is_money_contract_topic() -> bool:
     blob = _topic_blob()
     return _contains_any(blob, MONEY_CONTRACT_KW)
+
+
+def _money_contract_terms_not_in_evidence(
+    *, generated_text: str, evidence_text: str
+) -> List[str]:
+    body = str(generated_text or "")
+    evidence = str(evidence_text or "")
+    return [
+        term for term in _MONEY_CONTRACT_UNGROUNDED_TERMS
+        if term in body and term not in evidence
+    ]
 
 
 def _is_high_risk_topic() -> bool:
@@ -3589,6 +3614,12 @@ def _render_page_5_draft(
             return
 
         try:
+            # 新しい生成試行を始めるたびに、前回分のブロック通知をいったん
+            # クリアする。APIエラーで失敗した場合もこの直後にクリア済みの
+            # ままになるため、古いブロック通知とAPIエラーが同時に表示される
+            # ことはない。
+            st.session_state[KEYS["money_contract_block_terms"]] = ""
+
             with st.spinner("構成を考えています..."):
                 plan_text = generate_markdown(
                     prompt=_build_planning_prompt(),
@@ -3610,34 +3641,49 @@ def _render_page_5_draft(
             text = _strip_outer_code_fence(raw_text)
             text = _cleanup_generated_text(text)
 
-            st.session_state["api__status_code"] = ""
-            st.session_state["api__status_message"] = ""
-            st.session_state["api__status_detail"] = ""
-            st.session_state["api__last_runtime_error"] = ""
+            # お金・契約テーマのときだけ、AIへ実際に渡した根拠
+            # （_get_generation_evidence_text()）に無い制度用語が本文に
+            # 出ていないかを、last_text等へ保存するより前に確認する。
+            # ここではまだ古いproof_evidence/proof_evidence_compactしか
+            # session_stateに無いため、今回分の判定には使わない。
+            blocked_terms: List[str] = []
+            if _is_money_contract_topic():
+                blocked_terms = _money_contract_terms_not_in_evidence(
+                    generated_text=text,
+                    evidence_text=_get_generation_evidence_text(),
+                )
 
-            st.session_state[KEYS["plan_result"]] = plan_text
-            st.session_state[KEYS["last_text"]] = text
-            st.session_state[KEYS["proof_evidence"]] = str(_get_effective_input_evidence_text())
-            st.session_state[KEYS["proof_evidence_compact"]] = str(_get_generation_evidence_text())
-            st.session_state[KEYS["proof_suggest"]] = str(st.session_state.get(KEYS["suggest"], ""))
-            st.session_state[KEYS["proof_memo"]] = str(st.session_state.get(KEYS["memo"], ""))
-            # last_text/plan_resultはarticle__form_dataにも保存する（正本化）。
-            # 既存のsession_state側も、当面は互換のためこのまま更新し続ける。
-            _set_form_data_value("plan_result", plan_text)
-            _set_form_data_value("last_text", text)
+            if blocked_terms:
+                st.session_state[KEYS["money_contract_block_terms"]] = "、".join(blocked_terms)
+            else:
+                st.session_state["api__status_code"] = ""
+                st.session_state["api__status_message"] = ""
+                st.session_state["api__status_detail"] = ""
+                st.session_state["api__last_runtime_error"] = ""
 
-            # 公開前に自分で直す本文(copy_text)が既に編集済みの場合、
-            # 再生成のたびにAI初稿で勝手に上書きしない。空のときだけ
-            # AI初稿からの初回コピーを行う。
-            if _is_blank(_get_form_data_value("copy_text")):
-                _set_copy_state_from_text(text)
-            _save_snapshot()
+                st.session_state[KEYS["plan_result"]] = plan_text
+                st.session_state[KEYS["last_text"]] = text
+                st.session_state[KEYS["proof_evidence"]] = str(_get_effective_input_evidence_text())
+                st.session_state[KEYS["proof_evidence_compact"]] = str(_get_generation_evidence_text())
+                st.session_state[KEYS["proof_suggest"]] = str(st.session_state.get(KEYS["suggest"], ""))
+                st.session_state[KEYS["proof_memo"]] = str(st.session_state.get(KEYS["memo"], ""))
+                # last_text/plan_resultはarticle__form_dataにも保存する（正本化）。
+                # 既存のsession_state側も、当面は互換のためこのまま更新し続ける。
+                _set_form_data_value("plan_result", plan_text)
+                _set_form_data_value("last_text", text)
 
-            warns = _post_generation_warnings(text)
-            if warns:
-                st.warning("公開前に見直したい点があります。確認先と照合すると安心です。")
-                for warning_text in warns:
-                    st.write(f"- {warning_text}")
+                # 公開前に自分で直す本文(copy_text)が既に編集済みの場合、
+                # 再生成のたびにAI初稿で勝手に上書きしない。空のときだけ
+                # AI初稿からの初回コピーを行う。
+                if _is_blank(_get_form_data_value("copy_text")):
+                    _set_copy_state_from_text(text)
+                _save_snapshot()
+
+                warns = _post_generation_warnings(text)
+                if warns:
+                    st.warning("公開前に見直したい点があります。確認先と照合すると安心です。")
+                    for warning_text in warns:
+                        st.write(f"- {warning_text}")
 
         except OpenAIRuntimeError as e:
             st.session_state["api__status_code"] = str(getattr(e, "error_code", "") or "unknown_error")
@@ -3678,6 +3724,17 @@ def _render_page_5_draft(
 
             with st.expander("確認の詳細（開発用）", expanded=False):
                 st.code(str(getattr(e, "detail", "") or str(e)), language="text")
+
+    blocked_terms_display = str(
+        st.session_state.get(KEYS["money_contract_block_terms"], "") or ""
+    ).strip()
+    if blocked_terms_display:
+        st.warning(
+            f"直前に作成した下書きには、入力した根拠にない制度用語（{blocked_terms_display}）が"
+            "含まれていたため、保存されませんでした。"
+            "公式情報を追加するか、もう一度下書きを作成してください。"
+            "下に下書きが表示されている場合は、それ以前に保存された下書きです。"
+        )
 
     st.divider()
     st.markdown("### 📄 生成された記事")
