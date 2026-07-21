@@ -2290,3 +2290,90 @@ def test_generation_evidence_text_still_compacts_legacy_evidence_when_split_fiel
 
     assert "老齢厚生年金の受給要件は、基礎控除の対象となる期限を含む。" in result
     assert "ホーム > ページの先頭" not in result
+
+
+def test_is_money_contract_topic_detects_fee_and_card_keywords():
+    for keyword in ("継続手数料", "解約", "カード", "年会費", "返金", "請求"):
+        _reset_session_state()
+        st.session_state[KEYS["consult_question"]] = f"{keyword}について知りたいです。"
+        assert article_ui._is_money_contract_topic() is True, keyword
+
+
+def test_is_money_contract_topic_is_false_for_low_risk_generic_topic():
+    _reset_session_state()
+    st.session_state[KEYS["consult_situation"]] = "掃除機の吸引力が落ちてきました。"
+    st.session_state[KEYS["consult_question"]] = "掃除機のお手入れ方法を知りたいです。"
+
+    assert article_ui._is_money_contract_topic() is False
+
+
+def test_build_writing_prompt_includes_money_contract_caution_rules_for_saison_card_example():
+    _reset_session_state()
+    st.session_state[KEYS["consult_situation"]] = "セゾンカードを持っていますが、ほとんど使っていません。"
+    st.session_state[KEYS["consult_question"]] = "継続手数料2200円はどんな時に請求されますか。異議申し立てはできますか。"
+    st.session_state[KEYS["main_kw"]] = "セゾンカード 継続手数料"
+    st.session_state[KEYS["evidence_url"]] = ""
+    st.session_state[KEYS["evidence_title"]] = ""
+    st.session_state[KEYS["evidence_facts"]] = ""
+    st.session_state[KEYS["evidence_points"]] = ""
+    st.session_state[KEYS["evidence"]] = "継続手数料は年1回、税込2200円。"
+
+    prompt = article_ui._build_writing_prompt("")
+
+    assert "【お金・契約テーマの追加ルール】" in prompt
+    assert "断定しすぎないでください" in prompt
+    assert "問い合わせて確認するのが安全です" in prompt
+    assert "根拠に明記されていない限り断定しないでください" in prompt
+
+
+def test_build_writing_prompt_does_not_include_money_contract_rules_for_low_risk_topic():
+    _reset_session_state()
+    st.session_state[KEYS["consult_situation"]] = "掃除機の吸引力が落ちてきました。"
+    st.session_state[KEYS["consult_question"]] = "掃除機のお手入れ方法を知りたいです。"
+    st.session_state[KEYS["main_kw"]] = "掃除機 お手入れ"
+    st.session_state[KEYS["evidence_url"]] = ""
+    st.session_state[KEYS["evidence_title"]] = ""
+    st.session_state[KEYS["evidence_facts"]] = ""
+    st.session_state[KEYS["evidence_points"]] = ""
+    st.session_state[KEYS["evidence"]] = ""
+
+    prompt = article_ui._build_writing_prompt("")
+
+    assert "【お金・契約テーマの追加ルール】" not in prompt
+
+
+def test_build_writing_prompt_still_includes_pension_rules_and_excludes_money_rules():
+    # 既存の年金テーマ追加ルールが、今回のお金・契約テーマ追加ルールの影響を受けずに
+    # そのまま動くことを確認する回帰テスト。
+    _reset_session_state()
+    st.session_state[KEYS["consult_situation"]] = "働きながら年金を受け取っています。"
+    st.session_state[KEYS["consult_question"]] = "在職老齢年金の基準額を教えてください。"
+    st.session_state[KEYS["main_kw"]] = "在職老齢年金 基準額"
+    st.session_state[KEYS["evidence_url"]] = ""
+    st.session_state[KEYS["evidence_title"]] = ""
+    st.session_state[KEYS["evidence_facts"]] = ""
+    st.session_state[KEYS["evidence_points"]] = ""
+    st.session_state[KEYS["evidence"]] = "在職老齢年金の基準額は月51万円。"
+
+    prompt = article_ui._build_writing_prompt("")
+
+    assert "【年金テーマの追加ルール】" in prompt
+    assert "【お金・契約テーマの追加ルール】" not in prompt
+
+
+def test_build_writing_prompt_still_includes_forecast_rules_and_excludes_money_rules():
+    # 既存の見通しテーマ追加ルールも同様に、影響を受けないことを確認する回帰テスト。
+    _reset_session_state()
+    st.session_state[KEYS["consult_situation"]] = "業界の先行きに関心がある。"
+    st.session_state[KEYS["consult_question"]] = "市場は将来どうなる見通しですか。"
+    st.session_state[KEYS["main_kw"]] = "市場 将来 見通し"
+    st.session_state[KEYS["evidence_url"]] = ""
+    st.session_state[KEYS["evidence_title"]] = ""
+    st.session_state[KEYS["evidence_facts"]] = ""
+    st.session_state[KEYS["evidence_points"]] = ""
+    st.session_state[KEYS["evidence"]] = "業界団体の発表によると、来期は横ばいの見通し。"
+
+    prompt = article_ui._build_writing_prompt("")
+
+    assert "【今後の見通しテーマの追加ルール】" in prompt
+    assert "【お金・契約テーマの追加ルール】" not in prompt
