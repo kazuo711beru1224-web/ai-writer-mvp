@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Dict, Optional, Any, List
 from zoneinfo import ZoneInfo
 import datetime
+import hashlib
 import html
 import json
 import re
@@ -69,6 +70,12 @@ KEYS: Dict[str, str] = {
     # 手動リライト
     "manual_rewrite_text_widget": "quality__manual_rewrite_text",
     "manual_rewrite_text_saved": "quality__manual_rewrite_text_saved",
+    # 手動リライトが「どの本文に対して初期化済みか」を覚えておくための
+    # 内部マーカー。本文全文ではなくSHA-256ハッシュだけを持つことで、
+    # 自動保存・手動バックアップへ本文の重複コピーが混入しないようにする。
+    # tmp__接頭辞のため、app.py／state_io.pyの除外接頭辞規則により
+    # 保存・復元の対象外になる（内部判定専用、保存対象ではない）。
+    "manual_rewrite_source_hash": "tmp__quality_manual_rewrite_source_hash",
 
     # ボタン
     "btn_paste_latest": "btn_paste_latest",
@@ -180,6 +187,11 @@ def _check_past_date_future_tense(body: str) -> List[Dict[str, Any]]:
     return findings
 
 
+def _quality_text_fingerprint(text: str) -> str:
+    """本文の内容そのものではなく、一致判定用のSHA-256ハッシュだけを返す。"""
+    return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
+
+
 def _ensure_state() -> None:
     """初期化は if key not in で1回だけ（憲法準拠）"""
     must_init = (
@@ -196,6 +208,7 @@ def _ensure_state() -> None:
         KEYS["style_payload_json"],
         KEYS["notice"],
         KEYS["manual_rewrite_text_saved"],
+        KEYS["manual_rewrite_source_hash"],
     )
     for k in must_init:
         if k not in st.session_state:
@@ -482,6 +495,11 @@ def _paste_latest_generated() -> None:
     st.session_state[KEYS["style_lines"]] = ""
     st.session_state[KEYS["style_payload_json"]] = ""
 
+    # 新しい下書きに差し替えるため、古い本文に対する手直し文を持ち越さない。
+    st.session_state[KEYS["manual_rewrite_text_saved"]] = ""
+    st.session_state[KEYS["manual_rewrite_text_widget"]] = ""
+    st.session_state[KEYS["manual_rewrite_source_hash"]] = ""
+
     if latest:
         st.session_state[KEYS["notice"]] = "最新の下書きを貼り付けました。ここから確認を進められます。"
     else:
@@ -501,6 +519,7 @@ def _clear_check_text() -> None:
     st.session_state[KEYS["check_memo"]] = ""
     st.session_state[KEYS["manual_rewrite_text_saved"]] = ""
     st.session_state[KEYS["manual_rewrite_text_widget"]] = ""
+    st.session_state[KEYS["manual_rewrite_source_hash"]] = ""
     st.session_state[KEYS["diag_level"]] = ""
     st.session_state[KEYS["diag_lines"]] = ""
     st.session_state[KEYS["diag_payload_json"]] = ""
@@ -1039,31 +1058,6 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
                 st.markdown(_escape_and_mark(rewrite_example_text, []), unsafe_allow_html=True)
                 st.write("")
 
-                # ユーザが自分で修正案を書くための空欄（初期値は空）
-                st.markdown("**自分で直した文章を書く欄**")
-                manual_rewrite_widget = KEYS["manual_rewrite_text_widget"]
-                manual_rewrite_saved = KEYS["manual_rewrite_text_saved"]
-                if manual_rewrite_widget not in st.session_state:
-                    st.session_state[manual_rewrite_widget] = st.session_state.get(manual_rewrite_saved, "")
-
-                st.text_area(
-                    "自分で直した文章",
-                    key=manual_rewrite_widget,
-                    height=240,
-                    help="書き直した文章をここに入力し、上の『確認したい文章』に貼り直して再確認してください。",
-                    label_visibility="collapsed",
-                    on_change=_sync_widget_to_saved,
-                    kwargs={"widget_key": manual_rewrite_widget, "saved_key": manual_rewrite_saved},
-                )
-                _render_copy_button(
-                    text=str(st.session_state.get(manual_rewrite_saved, "") or ""),
-                    label="修正文をコピー",
-                )
-
-                st.markdown("**次の確認**")
-                st.write("上の考え方を参考にして文章を直してください。")
-                st.write("直した文章を『確認したい文章』に貼り直して、もう一度確認してください。")
-
         else:
             generic_fallback = (
                 issue_labels == ["確認したい箇所"]
@@ -1295,6 +1289,9 @@ def _render_quality_page_2_result() -> None:
         if style_items:
             _render_buyer_diagnosis_blocks(style_items)
 
+    st.divider()
+    st.info("確認が終わったら『次へ』を押し、3/3で文章を直してください。")
+
 
 def _render_quality_page_3_fix_save() -> None:
     st.markdown("### 3. 直す・保存する")
@@ -1305,13 +1302,50 @@ def _render_quality_page_3_fix_save() -> None:
         return
 
     st.caption(
-        "文章を直したい場合は『1. 文章を入れる』へ戻って書き換え、"
-        "『2. 確認結果を見る』でもう一度確認してください。"
+        "2. の確認結果を参考に、この画面で本文を書き直せます。"
     )
 
-    st.markdown("#### 現在の本文（読み取り専用）")
-    st.code(body, language="text")
-    _render_copy_button(text=body, label="この本文をコピー")
+    with st.expander("元の本文を確認する", expanded=False):
+        st.code(body, language="text")
+        _render_copy_button(text=body, label="この本文をコピー")
+
+    st.divider()
+
+    st.markdown("#### 自分で直した文章")
+    st.write("確認結果を参考に、必要な部分を書き直してください。元の本文を入れてあります。")
+
+    manual_rewrite_widget = KEYS["manual_rewrite_text_widget"]
+    manual_rewrite_saved = KEYS["manual_rewrite_text_saved"]
+    manual_rewrite_source_hash = KEYS["manual_rewrite_source_hash"]
+    if manual_rewrite_widget not in st.session_state:
+        saved_hash = str(st.session_state.get(manual_rewrite_source_hash, "") or "")
+        current_hash = _quality_text_fingerprint(body)
+        if saved_hash == current_hash:
+            # 同じ本文に対してすでに初期化済み。利用者が全文削除して空にした
+            # 場合も含め、保存済みの編集結果をそのまま復元する（本文で上書きしない）。
+            st.session_state[manual_rewrite_widget] = str(
+                st.session_state.get(manual_rewrite_saved, "") or ""
+            )
+        else:
+            # 本文が変わった（または3/3が初めて描画される）ので、本文を初期値にする。
+            # widget・saved・source_hashを同時にそろえ、未編集のままコピーしても
+            # 本文が正しくコピーされるようにする。
+            st.session_state[manual_rewrite_widget] = body
+            st.session_state[manual_rewrite_saved] = body
+            st.session_state[manual_rewrite_source_hash] = current_hash
+
+    st.text_area(
+        "自分で直した文章",
+        key=manual_rewrite_widget,
+        height=360,
+        label_visibility="collapsed",
+        on_change=_sync_widget_to_saved,
+        kwargs={"widget_key": manual_rewrite_widget, "saved_key": manual_rewrite_saved},
+    )
+    _render_copy_button(
+        text=str(st.session_state.get(manual_rewrite_saved, "") or ""),
+        label="修正文をコピー",
+    )
 
     st.divider()
 
