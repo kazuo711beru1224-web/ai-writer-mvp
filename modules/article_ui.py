@@ -516,6 +516,8 @@ def _set_stage1_field_value(field: str, value: object) -> None:
     keyのすべてに同じ値を反映し、画面にもそのまま反映されるようにする。
     """
     text = str(value or "")
+    if field == "memo":
+        _record_memo_write_trace("_set_stage1_field_value", _get_inputs_saved_value("memo"), text)
     _set_inputs_saved_value(field, text)
     _set_form_data_value(field, text)
     st.session_state[KEYS[field]] = text
@@ -531,6 +533,12 @@ def _sync_display_widget_to_inputs_saved(field: str) -> None:
     """
     display_key = _get_display_widget_key(field)
     value = st.session_state.get(display_key, "")
+    if field == "memo":
+        _record_memo_write_trace(
+            "_sync_display_widget_to_inputs_saved(on_change)",
+            _get_inputs_saved_value("memo"),
+            str(value or ""),
+        )
     _set_inputs_saved_value(field, value)
     _set_form_data_value(field, value)
     st.session_state[KEYS[field]] = str(value or "")
@@ -623,9 +631,79 @@ def _clear_form_data_fields(*fields: str) -> None:
         form_data[field] = ""
 
 
+# =========================
+# memo書き込み追跡（一時デバッグ計測。原因特定専用・恒久機能ではない）
+# =========================
+# article__inputs_saved["memo"]が「いつ・どの処理から・何文字→何文字へ」
+# 変わったかを、既存の値や処理順に一切手を加えずに観測するだけの一時ログ。
+# PERSIST_KEYS・保存データ（_safe_dump_state等）・復元対象（RESTORE_APPLY_KEYS等）
+# のいずれにも含めない、セッション内だけの監視用state。
+# 原因特定が終わったら、この節とその呼び出し箇所ごと削除してよい。
+# キー名はtmp__プレフィックスにする（app.pyのSTATE_EXCLUDE_PREFIXESが
+# 既にtmp__を自動保存ダンプ・保存データから除外する規約になっているため、
+# app.py側を一切変更せずに「保存データ・復元対象に含めない」を満たせる）。
+ARTICLE_MEMO_WRITE_TRACE_KEY = "tmp__article_memo_write_trace"
+ARTICLE_MEMO_WRITE_TRACE_SEQ_KEY = "tmp__article_memo_write_trace_seq"
+ARTICLE_MEMO_DEBUG_JUST_ENTERED_KEY = "tmp__article_debug_just_entered_menu"
+_MEMO_TRACE_MAX_ENTRIES = 20
+_MEMO_TRACE_PREVIEW_CHARS = 20
+
+
+def _memo_trace_preview(value: str) -> str:
+    text = str(value or "")
+    if len(text) <= _MEMO_TRACE_PREVIEW_CHARS:
+        return text
+    return text[:_MEMO_TRACE_PREVIEW_CHARS] + "…"
+
+
+def _record_memo_write_trace(source: str, before: object, after: object) -> None:
+    """
+    article__inputs_saved["memo"]への書き込みを観測するだけの一時ログ。
+    呼び出し側の処理より前に読むだけで、値そのものへは一切書き込まない
+    （監視専用・既存の処理順や結果を変えない）。
+    beforeがNoneの場合は「直前の値を計測できない」（辞書自体が未初期化だった等）
+    ことを示す特別値として記録する。
+    """
+    before_unknown = before is None
+    before_text = "" if before_unknown else str(before or "")
+    after_text = str(after or "")
+
+    seq = int(st.session_state.get(ARTICLE_MEMO_WRITE_TRACE_SEQ_KEY, 0)) + 1
+    st.session_state[ARTICLE_MEMO_WRITE_TRACE_SEQ_KEY] = seq
+
+    display_key = _get_display_widget_key("memo")
+    display_value = str(st.session_state.get(display_key, "") or "")
+
+    entry: Dict[str, Any] = {
+        "seq": seq,
+        "source": str(source or ""),
+        "active_page": st.session_state.get(ARTICLE_ACTIVE_PAGE_KEY, "<未初期化>"),
+        "display_generation": _get_display_key_generation("memo"),
+        "before_len": -1 if before_unknown else len(before_text),
+        "before_preview": "<不明/未初期化>" if before_unknown else _memo_trace_preview(before_text),
+        "after_len": len(after_text),
+        "after_preview": _memo_trace_preview(after_text),
+        "mirror_len": len(str(st.session_state.get(KEYS["memo"], "") or "")),
+        "form_data_len": len(_get_form_data_value("memo")),
+        "display_key": display_key,
+        "display_value_len": len(display_value),
+        "just_entered_menu": st.session_state.get(ARTICLE_MEMO_DEBUG_JUST_ENTERED_KEY, "<不明>"),
+        "went_blank": (not before_unknown) and bool(before_text.strip()) and not bool(after_text.strip()),
+    }
+
+    trace = st.session_state.get(ARTICLE_MEMO_WRITE_TRACE_KEY)
+    if not isinstance(trace, list):
+        trace = []
+    trace = trace + [entry]
+    if len(trace) > _MEMO_TRACE_MAX_ENTRIES:
+        trace = trace[-_MEMO_TRACE_MAX_ENTRIES:]
+    st.session_state[ARTICLE_MEMO_WRITE_TRACE_KEY] = trace
+
+
 def _ensure_article_inputs_saved() -> None:
     """article__inputs_savedが無ければ空dictで作る。"""
     if not isinstance(st.session_state.get(ARTICLE_INPUTS_SAVED_KEY), dict):
+        _record_memo_write_trace("_ensure_article_inputs_saved(dict再作成)", None, "")
         st.session_state[ARTICLE_INPUTS_SAVED_KEY] = {}
 
 
@@ -645,6 +723,12 @@ def _set_inputs_saved_value(field: str, value: object) -> None:
 def _clear_inputs_saved_fields(*fields: str) -> None:
     inputs_saved = _get_article_inputs_saved()
     for field in fields:
+        if field == "memo":
+            _record_memo_write_trace(
+                "_clear_inputs_saved_fields(入力欄を空にするボタン)",
+                inputs_saved.get("memo", ""),
+                "",
+            )
         inputs_saved[field] = ""
 
 
@@ -689,6 +773,12 @@ def _sync_widget_to_inputs_saved(field: str) -> None:
     """
     widget_key = KEYS[field]
     value = st.session_state.get(widget_key, "")
+    if field == "memo":
+        _record_memo_write_trace(
+            "_sync_widget_to_inputs_saved(_go_to_page保険同期)",
+            _get_inputs_saved_value("memo"),
+            str(value or ""),
+        )
     _set_inputs_saved_value(field, value)
     _set_form_data_value(field, value)
 
@@ -3344,6 +3434,10 @@ def render_article_ui(
     use_real_api: bool,
     just_entered_menu: bool = False,
 ) -> None:
+    # memo書き込み追跡（一時デバッグ）専用：記事モードへ入った直後かどうかを
+    # 観測用に記録するだけの一時キー。既存ロジックはこの値を一切参照しない。
+    st.session_state[ARTICLE_MEMO_DEBUG_JUST_ENTERED_KEY] = bool(just_entered_menu)
+
     # _ensure_keys_initialized()はKEYSの各widget keyが無ければ""で埋めるため、
     # 先に呼んでしまうと「非表示ページでStreamlitの仕様により消えた」という
     # 状態と「まだ何も入力していない」状態が区別できなくなり、form_data側の
@@ -3535,6 +3629,59 @@ def _debug_field_status(field: str) -> Dict[str, Any]:
     }
 
 
+def _render_memo_write_trace_panel() -> None:
+    """
+    article__inputs_saved["memo"]への全書き込みを時系列で表示する一時デバッグ。
+    観測専用（表示するだけ）で、値の書き込みや処理順には一切影響しない。
+    原因特定が終わったら、この関数とその呼び出し・_record_memo_write_trace()
+    呼び出し箇所ごと削除してよい。
+    """
+    trace = st.session_state.get(ARTICLE_MEMO_WRITE_TRACE_KEY)
+    if not isinstance(trace, list) or not trace:
+        st.caption("memoの書き込み記録はまだありません（memoに関係する書き込みが発生すると記録されます）。")
+        return
+
+    st.markdown("#### 🔎 memo書き込み追跡（直近20件・時系列）")
+    st.caption(
+        "article__inputs_saved[\"memo\"]への書き込みだけを監視した一時ログです。"
+        "本文・APIキー等の全文は表示せず、文字数と先頭20文字だけを記録します。"
+    )
+
+    blank_events = [e for e in trace if e.get("went_blank")]
+    if blank_events:
+        st.error(f"⚠️ 非空 → 空 への書き込みが{len(blank_events)}件見つかりました。")
+        for e in blank_events:
+            st.write(
+                f"- #{e['seq']}｜呼び出し元：**{e['source']}**｜"
+                f"active_page={e['active_page']}｜表示世代=v{e['display_generation']}｜"
+                f"記事モード入室直後={e['just_entered_menu']}｜"
+                f"{e['before_len']}文字「{e['before_preview']}」→ 0文字"
+            )
+    else:
+        st.caption("非空→空への書き込みはまだ記録されていません。")
+
+    rows = [
+        {
+            "#": e["seq"],
+            "呼び出し元": e["source"],
+            "active_page": e["active_page"],
+            "表示世代": e["display_generation"],
+            "変更前文字数": e["before_len"],
+            "変更前先頭20文字": e["before_preview"],
+            "変更後文字数": e["after_len"],
+            "変更後先頭20文字": e["after_preview"],
+            "旧KEYSミラー文字数": e["mirror_len"],
+            "form_data文字数": e["form_data_len"],
+            "表示widget key": e["display_key"],
+            "表示widget文字数": e["display_value_len"],
+            "記事モード入室直後": e["just_entered_menu"],
+            "非空→空": "⚠️" if e["went_blank"] else "",
+        }
+        for e in trace
+    ]
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
 def _render_debug_inputs_saved_panel() -> None:
     show_debug = st.checkbox("開発用デバッグを表示する", key=DEBUG_INPUTS_SAVED_TOGGLE_KEY)
     if not show_debug:
@@ -3554,6 +3701,9 @@ def _render_debug_inputs_saved_panel() -> None:
 
         rows = [_debug_field_status(field) for field in ARTICLE_INPUTS_SAVED_STAGE1_FIELDS]
         st.dataframe(rows, use_container_width=True, hide_index=True)
+
+        st.divider()
+        _render_memo_write_trace_panel()
 
 
 def _render_page_5_draft(

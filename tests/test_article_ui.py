@@ -2035,10 +2035,15 @@ def test_debug_panel_shows_exactly_12_rows_when_checkbox_checked(monkeypatch):
 
     article_ui._render_debug_inputs_saved_panel()
 
-    assert len(dataframe_calls) == 1
-    rows = dataframe_calls[0][0][0]
-    assert len(rows) == 12
-    assert {row["項目"] for row in rows} == set(article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS)
+    # 一時デバッグ計測（memo書き込み追跡パネル）が追加され、条件次第で
+    # 2つ目のst.dataframe呼び出しが増えることがあるため、呼び出し回数では
+    # なく「12項目ぶんのdataframe」を内容で特定して検証する。
+    twelve_field_calls = [
+        call for call in dataframe_calls
+        if len(call[0][0]) == 12
+        and {row["項目"] for row in call[0][0]} == set(article_ui.ARTICLE_INPUTS_SAVED_STAGE1_FIELDS)
+    ]
+    assert len(twelve_field_calls) == 1
 
 
 # =========================
