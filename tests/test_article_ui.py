@@ -2569,3 +2569,111 @@ def test_clear_generated_only_clears_money_contract_block_terms():
     article_ui._clear_generated_only()
 
     assert st.session_state[KEYS["money_contract_block_terms"]] == ""
+
+
+# 「入力内容から詳細設定を自動補助する」ボタン（_apply_consult_to_article_inputs）は、
+# 利用者がすでに入力済みのmain_kw/theme/memoを無条件で上書きしていた。
+# 正本（article__inputs_saved）が空欄の項目だけを補助するように修正したことの確認。
+
+
+def _set_consult_inputs(situation: str = "掃除機の吸引力が落ちてきました。", question: str = "掃除機のお手入れのコツを知りたいです。") -> None:
+    st.session_state[KEYS["consult_situation"]] = situation
+    st.session_state[KEYS["consult_question"]] = question
+
+
+def test_apply_consult_fills_memo_when_blank():
+    _reset_session_state()
+    _set_consult_inputs()
+    article_ui._set_inputs_saved_value("memo", "")
+
+    assert article_ui._apply_consult_to_article_inputs() is True
+
+    assert article_ui._get_inputs_saved_value("memo") != ""
+
+
+def test_apply_consult_does_not_overwrite_memo_when_already_filled():
+    _reset_session_state()
+    _set_consult_inputs()
+    article_ui._set_inputs_saved_value("memo", "利用者がすでに書いたメモ")
+
+    assert article_ui._apply_consult_to_article_inputs() is True
+
+    assert article_ui._get_inputs_saved_value("memo") == "利用者がすでに書いたメモ"
+
+
+def test_apply_consult_fills_main_kw_when_blank():
+    _reset_session_state()
+    _set_consult_inputs()
+    article_ui._set_inputs_saved_value("main_kw", "")
+
+    assert article_ui._apply_consult_to_article_inputs() is True
+
+    assert article_ui._get_inputs_saved_value("main_kw") != ""
+
+
+def test_apply_consult_does_not_overwrite_main_kw_when_already_filled():
+    _reset_session_state()
+    _set_consult_inputs()
+    article_ui._set_inputs_saved_value("main_kw", "利用者が入力したメインキーワード")
+
+    assert article_ui._apply_consult_to_article_inputs() is True
+
+    assert article_ui._get_inputs_saved_value("main_kw") == "利用者が入力したメインキーワード"
+
+
+def test_apply_consult_fills_theme_when_blank():
+    _reset_session_state()
+    _set_consult_inputs()
+    article_ui._set_inputs_saved_value("theme", "")
+
+    assert article_ui._apply_consult_to_article_inputs() is True
+
+    assert article_ui._get_inputs_saved_value("theme") != ""
+
+
+def test_apply_consult_does_not_overwrite_theme_when_already_filled():
+    _reset_session_state()
+    _set_consult_inputs()
+    article_ui._set_inputs_saved_value("theme", "利用者が決めたテーマ")
+
+    assert article_ui._apply_consult_to_article_inputs() is True
+
+    assert article_ui._get_inputs_saved_value("theme") == "利用者が決めたテーマ"
+
+
+def test_apply_consult_keeps_filled_fields_and_fills_only_blank_ones():
+    _reset_session_state()
+    _set_consult_inputs()
+    article_ui._set_inputs_saved_value("main_kw", "利用者のメインキーワード")
+    article_ui._set_inputs_saved_value("theme", "")
+    article_ui._set_inputs_saved_value("memo", "利用者のメモ")
+
+    assert article_ui._apply_consult_to_article_inputs() is True
+
+    assert article_ui._get_inputs_saved_value("main_kw") == "利用者のメインキーワード"
+    assert article_ui._get_inputs_saved_value("theme") != ""
+    assert article_ui._get_inputs_saved_value("memo") == "利用者のメモ"
+
+
+def test_apply_consult_does_not_overwrite_when_display_widget_is_blank_but_saved_value_is_filled():
+    _reset_session_state()
+    _set_consult_inputs()
+    article_ui._set_inputs_saved_value("memo", "正本に保存済みのメモ")
+    # 表示widgetは世代0（未描画）で空文字のまま。正本だけが非空の状態を再現する。
+    st.session_state[article_ui._get_display_widget_key("memo")] = ""
+
+    assert article_ui._apply_consult_to_article_inputs() is True
+
+    assert article_ui._get_inputs_saved_value("memo") == "正本に保存済みのメモ"
+
+
+def test_apply_consult_records_memo_write_trace_when_memo_is_actually_filled():
+    _reset_session_state()
+    _set_consult_inputs()
+    article_ui._set_inputs_saved_value("memo", "")
+
+    assert article_ui._apply_consult_to_article_inputs() is True
+
+    trace = st.session_state.get(article_ui.ARTICLE_MEMO_WRITE_TRACE_KEY)
+    assert trace
+    assert trace[-1]["source"] == "_set_stage1_field_value"

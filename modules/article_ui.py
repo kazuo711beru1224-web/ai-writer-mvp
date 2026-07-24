@@ -1758,14 +1758,19 @@ def _apply_consult_to_article_inputs() -> bool:
         st.session_state[KEYS["save_message"]] = "相談内容が空のため、整理できませんでした。先に「今の状況」か「知りたいこと」を入力してください。"
         return False
 
-    _set_stage1_field_value("main_kw", _guess_main_kw_from_consult(situation, question))
+    # main_kw/theme/memoは、正本（article__inputs_saved）が空欄の場合だけ
+    # 自動補助値で埋める。利用者がすでに入力済みの値は上書きしない。
+    if _is_blank(_get_inputs_saved_value("main_kw")):
+        _set_stage1_field_value("main_kw", _guess_main_kw_from_consult(situation, question))
     guessed_suggest = _guess_suggest_from_consult(situation, question)
 
     # suggest は標準入力側の widget のため、ここでは上書きしない。
     current_suggest = str(st.session_state.get(KEYS["suggest"], "") or "").strip()
     _set_stage1_field_value("sub_kw", current_suggest or guessed_suggest)
-    _set_stage1_field_value("theme", _guess_theme_from_consult(situation, question))
-    _set_stage1_field_value("memo", _guess_memo_from_consult(situation, question))
+    if _is_blank(_get_inputs_saved_value("theme")):
+        _set_stage1_field_value("theme", _guess_theme_from_consult(situation, question))
+    if _is_blank(_get_inputs_saved_value("memo")):
+        _set_stage1_field_value("memo", _guess_memo_from_consult(situation, question))
 
     st.session_state["article__show_detail_assist_hint"] = True
 
