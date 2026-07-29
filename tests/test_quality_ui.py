@@ -1,3 +1,4 @@
+import contextlib
 import inspect
 import json
 
@@ -585,3 +586,330 @@ def test_go_to_quality_page_does_not_blank_saved_when_widget_never_rendered():
     quality_ui._go_to_quality_page(QUALITY_PAGE_RESULT)
 
     assert st.session_state[KEYS["check_text_saved"]] == "既存の本文"
+
+
+# =========================
+# 2/3 カード＋表形式レイアウト
+# （重複する共通案内文の整理、1件＝1カード表示の回帰確認）
+# =========================
+
+def _finding(**overrides):
+    base = {
+        "rank": "CAUTION",
+        "headline": "公開前に確認したい点があります。",
+        "lead": "",
+        "issue_label": "確認したいラベル",
+        "issue_text": "確認したい内容の説明です。",
+        "reason_text": "理由の説明です。",
+        "fix_text": "直し方の説明です。",
+        "rewrite_example": "",
+        "matched_texts": ["対象語句A"],
+        "code": "表記ゆれ候補",
+    }
+    base.update(overrides)
+    return base
+
+
+def _prepare_page2_result(
+    monkeypatch,
+    *,
+    diag_level: str = "",
+    diag_items=None,
+    style_level: str = "",
+    style_items=None,
+    body: str = "確認したい本文です。",
+):
+    _reset_session_state()
+    st.session_state[QUALITY_ACTIVE_PAGE_KEY] = QUALITY_PAGE_RESULT
+    st.session_state[KEYS["check_text_saved"]] = body
+    st.session_state[KEYS["diag_level"]] = diag_level
+    st.session_state[KEYS["diag_payload_json"]] = json.dumps(diag_items or [], ensure_ascii=False)
+    st.session_state[KEYS["style_level"]] = style_level
+    st.session_state[KEYS["style_payload_json"]] = json.dumps(style_items or [], ensure_ascii=False)
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: False)
+
+
+def _capture_render_calls(monkeypatch):
+    # st.markdown / st.write / st.warning / st.error / st.success の呼び出しを
+    # (種類, テキスト) のタプルとして時系列で記録する。
+    calls = []
+
+    def _record(kind):
+        def _fn(text, *args, **kwargs):
+            calls.append((kind, str(text)))
+        return _fn
+
+    monkeypatch.setattr(st, "markdown", _record("markdown"))
+    monkeypatch.setattr(st, "write", _record("write"))
+    monkeypatch.setattr(st, "warning", _record("warning"))
+    monkeypatch.setattr(st, "error", _record("error"))
+    monkeypatch.setattr(st, "success", _record("success"))
+    monkeypatch.setattr(st, "info", _record("info"))
+    return calls
+
+
+def _capture_container_borders(monkeypatch):
+    # st.container(border=...) の呼び出し回数・引数を記録する。
+    borders = []
+
+    @contextlib.contextmanager
+    def _fake_container(*args, **kwargs):
+        borders.append(kwargs.get("border"))
+        yield None
+
+    monkeypatch.setattr(st, "container", _fake_container)
+    return borders
+
+
+def test_page2_common_caution_notice_shown_exactly_once(monkeypatch):
+    # テストA：安全チェック・表記チェックの両方がCAUTIONでも、
+    # 共通案内文は画面全体で1回だけ表示される。
+    diag_items = [_finding(matched_texts=["対象語句A"]), _finding(matched_texts=["対象語句B"])]
+    style_items = [_finding(code="表記ゆれ候補", matched_texts=["表記A"])]
+    _prepare_page2_result(
+        monkeypatch,
+        diag_level="CAUTION",
+        diag_items=diag_items,
+        style_level="CAUTION",
+        style_items=style_items,
+    )
+    calls = _capture_render_calls(monkeypatch)
+    _capture_container_borders(monkeypatch)
+
+    render_quality_ui()
+
+    notice = quality_ui._QUALITY_COMMON_CAUTION_NOTICE
+    notice_calls = [c for c in calls if c == ("warning", notice)]
+    assert len(notice_calls) == 1
+
+
+def test_page2_finding_count_matches_bordered_container_count(monkeypatch):
+    # テストB：findingが2件なら、border付きcontainerが2件分使われる。
+    diag_items = [_finding(matched_texts=["対象語句A"]), _finding(matched_texts=["対象語句B"])]
+    _prepare_page2_result(monkeypatch, diag_level="CAUTION", diag_items=diag_items)
+    _capture_render_calls(monkeypatch)
+    borders = _capture_container_borders(monkeypatch)
+
+    render_quality_ui()
+
+    assert borders.count(True) == 2
+
+
+def test_page2_card_shows_fields_in_fixed_order(monkeypatch):
+    # テストC：各カードは 状態 → 確認内容 → 対象語句・確認箇所 → 理由 → 直し方 の順で表示される。
+    diag_items = [_finding()]
+    _prepare_page2_result(monkeypatch, diag_level="CAUTION", diag_items=diag_items)
+    calls = _capture_render_calls(monkeypatch)
+    _capture_container_borders(monkeypatch)
+
+    render_quality_ui()
+
+    texts = [text for _, text in calls]
+
+    def first_index(marker):
+        for i, text in enumerate(texts):
+            if marker in text:
+                return i
+        raise AssertionError(f"marker not found: {marker}")
+
+    idx_status = first_index("状態")
+    idx_confirm = first_index("確認内容")
+    idx_target = first_index("対象語句・確認箇所")
+    idx_reason = first_index("理由")
+    idx_fix = first_index("直し方")
+
+    assert idx_status < idx_confirm < idx_target < idx_reason < idx_fix
+
+
+def test_page2_matched_texts_render_as_bracketed_terms(monkeypatch):
+    # テストD：matched_textsがある場合、対象語句・確認箇所が「」区切りで表示される。
+    diag_items = [_finding(matched_texts=["必要です", "求められます"])]
+    _prepare_page2_result(monkeypatch, diag_level="CAUTION", diag_items=diag_items)
+    calls = _capture_render_calls(monkeypatch)
+    _capture_container_borders(monkeypatch)
+
+    render_quality_ui()
+
+    assert ("write", "「必要です」「求められます」") in calls
+
+
+def test_page2_empty_matched_texts_skip_target_heading(monkeypatch):
+    # テストE：matched_textsが空の場合、対象語句・確認箇所欄自体を表示しない。
+    diag_items = [_finding(matched_texts=[])]
+    _prepare_page2_result(monkeypatch, diag_level="CAUTION", diag_items=diag_items)
+    calls = _capture_render_calls(monkeypatch)
+    _capture_container_borders(monkeypatch)
+
+    render_quality_ui()
+
+    assert ("markdown", "**対象語句・確認箇所**") not in calls
+
+
+def test_page2_generic_caution_headline_not_repeated_in_cards(monkeypatch):
+    # テストF：findingごとの共通headline「公開前に確認したい点があります。」は、
+    # 複数件あってもカード内で繰り返し表示されない（データは残るが表示だけ省略）。
+    duplicate_headline = "公開前に確認したい点があります。"
+    diag_items = [
+        _finding(headline=duplicate_headline, matched_texts=["対象語句A"]),
+        _finding(headline=duplicate_headline, matched_texts=["対象語句B"]),
+    ]
+    _prepare_page2_result(monkeypatch, diag_level="CAUTION", diag_items=diag_items)
+    calls = _capture_render_calls(monkeypatch)
+    _capture_container_borders(monkeypatch)
+
+    render_quality_ui()
+
+    assert all(text != duplicate_headline for _, text in calls)
+    assert all(text != f"**{duplicate_headline}**" for _, text in calls)
+    # データ自体は削除していないことも確認する。
+    assert all(item["headline"] == duplicate_headline for item in diag_items)
+
+
+def test_page2_specific_headline_is_shown_in_card(monkeypatch):
+    # テストB：finding固有のheadline「少し直した方がよい言い方があります。」は
+    # 共通文言と一致しないため、カード内に表示される。
+    specific_headline = "少し直した方がよい言い方があります。"
+    style_items = [_finding(
+        code="便利表現チェック",
+        headline=specific_headline,
+        issue_label="",
+        issue_text="",
+        matched_texts=["これにより"],
+    )]
+    _prepare_page2_result(monkeypatch, style_level="CAUTION", style_items=style_items)
+    calls = _capture_render_calls(monkeypatch)
+    _capture_container_borders(monkeypatch)
+
+    render_quality_ui()
+
+    assert ("write", specific_headline) in calls
+
+
+def test_page2_specific_headline_appears_after_status_and_before_confirm_content(monkeypatch):
+    # テストC：固有headlineの表示位置は「状態」の直後・「確認内容」の前であること。
+    specific_headline = "少し直した方がよい言い方があります。"
+    diag_items = [_finding(headline=specific_headline)]
+    _prepare_page2_result(monkeypatch, diag_level="CAUTION", diag_items=diag_items)
+    calls = _capture_render_calls(monkeypatch)
+    _capture_container_borders(monkeypatch)
+
+    render_quality_ui()
+
+    texts = [text for _, text in calls]
+
+    def first_index(marker):
+        for i, text in enumerate(texts):
+            if marker in text:
+                return i
+        raise AssertionError(f"marker not found: {marker}")
+
+    idx_status = first_index("状態")
+    idx_headline = first_index(specific_headline)
+    idx_confirm = first_index("確認内容")
+
+    assert idx_status < idx_headline < idx_confirm
+
+
+def test_page2_multiple_findings_hide_common_headline_and_show_specific_headlines(monkeypatch):
+    # テストD：複数findingが混在する場合、共通headlineは非表示のまま、
+    # finding固有のheadlineはそれぞれ個別に表示される。
+    common_headline = "公開前に確認したい点があります。"
+    specific_headline_1 = "少し直した方がよい言い方があります。"
+    specific_headline_2 = "表記をそろえたい箇所があります。"
+
+    diag_items = [_finding(headline=common_headline, matched_texts=["対象語句A"])]
+    style_items = [
+        _finding(code="便利表現チェック", headline=specific_headline_1, matched_texts=["これにより"]),
+        _finding(code="表記ゆれ候補", headline=specific_headline_2, matched_texts=["表記A"]),
+    ]
+    _prepare_page2_result(
+        monkeypatch,
+        diag_level="CAUTION",
+        diag_items=diag_items,
+        style_level="CAUTION",
+        style_items=style_items,
+    )
+    calls = _capture_render_calls(monkeypatch)
+    _capture_container_borders(monkeypatch)
+
+    render_quality_ui()
+
+    assert all(text != common_headline for _, text in calls)
+    assert ("write", specific_headline_1) in calls
+    assert ("write", specific_headline_2) in calls
+
+
+def test_page2_news_timeliness_finding_uses_same_card_format(monkeypatch):
+    # テストG：最新情報・時事性警告（guardrails由来）でも同じカード形式になる。
+    diag_items = [_finding(
+        code="最新情報は最終確認前提",
+        issue_label="参照日・発表元・確認先",
+        issue_text="本文で最新の出来事や時事性のある内容を扱っています。",
+        reason_text="最新情報は、追加の発表や訂正で内容が変わることがあります。",
+        fix_text="参照日と発表元を確認し、複数の確認先で照合してください。",
+        matched_texts=[],
+    )]
+    _prepare_page2_result(monkeypatch, diag_level="CAUTION", diag_items=diag_items)
+    calls = _capture_render_calls(monkeypatch)
+    borders = _capture_container_borders(monkeypatch)
+
+    render_quality_ui()
+
+    assert borders.count(True) == 1
+    assert ("markdown", "**状態：** CAUTION") in calls
+    assert ("markdown", "**理由**") in calls
+    assert ("markdown", "**直し方**") in calls
+
+
+def test_page2_style_finding_uses_same_card_format(monkeypatch):
+    # テストH：表記・言い回し警告でも同じカード形式になる。
+    style_items = [_finding(code="表記ゆれ候補", matched_texts=["表記A"])]
+    _prepare_page2_result(monkeypatch, style_level="CAUTION", style_items=style_items)
+    calls = _capture_render_calls(monkeypatch)
+    borders = _capture_container_borders(monkeypatch)
+
+    render_quality_ui()
+
+    assert borders.count(True) == 1
+    assert ("markdown", "**状態：** CAUTION") in calls
+    assert ("markdown", "**対象語句・確認箇所**") in calls
+
+
+def test_page2_rewrite_example_still_rendered(monkeypatch):
+    # テストI-1：rewrite_exampleが維持され、カード内に表示される。
+    style_items = [_finding(code="語尾3連続", rewrite_example="例：言い換え例です。")]
+    _prepare_page2_result(monkeypatch, style_level="CAUTION", style_items=style_items)
+    calls = _capture_render_calls(monkeypatch)
+    _capture_container_borders(monkeypatch)
+
+    render_quality_ui()
+
+    assert ("markdown", "**言い換え例**") in calls
+    assert ("write", "例：言い換え例です。") in calls
+
+
+def test_page2_convenient_phrase_finding_keeps_highlight_and_copy_button(monkeypatch):
+    # テストI-2：便利表現チェックの本文ハイライト表示・
+    # 「指摘付き本文をコピー」の既存コピー機能が維持される。
+    body = "これにより効果があります。"
+    style_items = [_finding(
+        code="便利表現チェック",
+        headline="少し直した方がよい言い方があります。",
+        issue_label="",
+        issue_text="",
+        matched_texts=["これにより"],
+    )]
+    _prepare_page2_result(monkeypatch, style_level="CAUTION", style_items=style_items, body=body)
+    _capture_render_calls(monkeypatch)
+    _capture_container_borders(monkeypatch)
+
+    copy_calls = []
+    monkeypatch.setattr(
+        quality_ui,
+        "_render_copy_button",
+        lambda text, label: copy_calls.append((text, label)),
+    )
+
+    render_quality_ui()
+
+    assert (body, "指摘付き本文をコピー") in copy_calls

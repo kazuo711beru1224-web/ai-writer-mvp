@@ -939,6 +939,14 @@ def _suggest_rewrite_text(body: str, highlights: List[str]) -> str:
     return ""
 
 
+# 文章チェック2/3の上部に1回だけ出す共通案内文（安全チェック・表記チェック共通）。
+_QUALITY_COMMON_CAUTION_NOTICE = "公開前に確認したい点があります。今のうちに見直すと安心です。"
+
+# findingごとのheadlineのうち、上記の共通案内文と同じ趣旨で重複する汎用見出し。
+# この文言と完全一致する場合だけカード内で非表示にし、finding固有のheadlineは表示する。
+_QUALITY_DUPLICATE_CAUTION_HEADLINE = "公開前に確認したい点があります。"
+
+
 def _render_badge(title: str, level: str) -> None:
     badge_map = {
         "SAFE": "✅ SAFE",
@@ -951,19 +959,23 @@ def _render_badge(title: str, level: str) -> None:
 
 def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
     """
-    購入者向け診断ブロックを表示する。
-    結論 → 該当箇所 → 理由 → 直し方
+    購入者向け診断ブロックを、1件＝1カード（表に近い固定レイアウト）で表示する。
+    カード内は「状態 → headline（共通文言のみ非表示） → 確認内容 → 対象語句・確認箇所 →
+    理由 → 直し方」の順で統一する。
+    headlineが上部の共通案内文と同じ趣旨の汎用見出し（完全一致）の場合だけ表示を省略し、
+    finding固有のheadlineは表示する（データ自体はitemに残したまま、表示可否だけを分ける）。
     """
     for item in items:
         code = str(item.get("code", "") or "").strip()
+        rank = str(item.get("rank", "") or "").strip()
         headline = str(item.get("headline", "") or "").strip()
         lead = str(item.get("lead", "") or "").strip()
         issue_label_raw = item.get("issue_label", "") or ""
         issue_text_raw = item.get("issue_text", "") or ""
         reason_text = str(item.get("reason_text", "") or "").strip()
         fix_text = str(item.get("fix_text", "") or "").strip()
-        rewrite_example = item.get("rewrite_example", "") or ""
-        matched_texts = item.get("matched_texts", []) or []
+        rewrite_example = str(item.get("rewrite_example", "") or "").strip()
+        matched_texts = [str(x) for x in (item.get("matched_texts", []) or []) if str(x).strip()]
 
         def normalize_list(value: Any) -> List[str]:
             if isinstance(value, list):
@@ -974,21 +986,32 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
         issue_labels = normalize_list(issue_label_raw)
         issue_texts = normalize_list(issue_text_raw)
 
-        st.markdown("---")
+        is_convenient_phrase = code == "便利表現チェック"
+        body = str(st.session_state.get(KEYS["check_text_saved"], "") or "") if is_convenient_phrase else ""
 
-        if headline:
-            st.markdown(f"**{headline}**")
-        if lead:
-            st.write(lead)
+        with st.container(border=True):
+            # 状態：判定ロジックが出したrankをそのまま表示する（値・判定方法は変更しない）。
+            st.markdown(f"**状態：** {rank or '（未診断）'}")
 
-        if code == "便利表現チェック":
-            body = str(st.session_state.get(KEYS["check_text_saved"], "") or "")
-            if body and matched_texts:
+            # headline：共通案内文と同じ趣旨の汎用見出し（完全一致）だけ非表示にし、
+            # finding固有のheadlineは状態の直後・確認内容の前に表示する。
+            if headline and headline != _QUALITY_DUPLICATE_CAUTION_HEADLINE:
+                st.write(headline)
+
+            # 確認内容：issue_label / issue_text を優先。共通案内文と重複するleadは表示しない。
+            confirm_lines: List[str] = []
+            if lead and lead != _QUALITY_COMMON_CAUTION_NOTICE:
+                confirm_lines.append(lead)
+            confirm_lines.extend(issue_labels)
+            confirm_lines.extend(issue_texts)
+            if confirm_lines:
+                st.markdown("**確認内容**")
+                for line in confirm_lines:
+                    st.write(line)
+
+            if is_convenient_phrase and body and matched_texts:
                 st.markdown("#### \u76f4\u3059\u5834\u6240\u304c\u308f\u304b\u308b\u672c\u6587")
-                safe_body = _escape_and_mark(
-                    body,
-                    [str(text) for text in matched_texts if str(text).strip()],
-                )
+                safe_body = _escape_and_mark(body, matched_texts)
 
                 st.markdown(
                     f"""
@@ -1011,20 +1034,20 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
                 )
                 _render_copy_button(text=body, label="指摘付き本文をコピー")
 
+            # 対象語句または確認箇所：matched_textsがある場合のみ表示する。
             if matched_texts:
-                st.markdown("**直した方がよい言葉**")
-                for text in matched_texts:
-                    st.markdown(f"- {html.escape(str(text))}")
+                st.markdown("**対象語句・確認箇所**")
+                st.write("".join(f"「{t}」" for t in matched_texts))
 
             if reason_text:
-                st.markdown("**なぜ直すのか**")
+                st.markdown("**理由**")
                 st.write(reason_text)
 
             if fix_text:
                 st.markdown("**直し方**")
                 st.write(fix_text)
 
-            if body and matched_texts:
+            if is_convenient_phrase and body and matched_texts:
                 # 汎用的な修正の考え方を提示
                 st.markdown("**修正の考え方**")
                 st.write("この文章は、言葉を置き換えるだけでは自然になりません。")
@@ -1057,43 +1080,6 @@ def _render_buyer_diagnosis_blocks(items: List[Dict[str, Any]]) -> None:
                 st.write("直し方：")
                 st.markdown(_escape_and_mark(rewrite_example_text, []), unsafe_allow_html=True)
                 st.write("")
-
-        else:
-            generic_fallback = (
-                issue_labels == ["確認したい箇所"]
-                and issue_texts == ["本文の表現を確認してください。"]
-            )
-
-            if generic_fallback and matched_texts:
-                st.markdown("**見直したい言葉**")
-                for t in matched_texts:
-                    st.markdown(f"- {t}")
-            else:
-                if issue_labels:
-                    st.markdown("**確認したい箇所**")
-                    for label in issue_labels:
-                        if label != "確認したい箇所":
-                            st.markdown(f"- {label}")
-                    if issue_texts:
-                        for text in issue_texts:
-                            st.write(text)
-                elif issue_texts:
-                    st.markdown("**確認したい箇所**")
-                    for text in issue_texts:
-                        st.write(text)
-
-                if matched_texts:
-                    st.markdown("**本文の該当箇所**")
-                    for t in matched_texts:
-                        st.markdown(f"- {t}")
-
-            if reason_text:
-                st.markdown("**理由**")
-                st.write(reason_text)
-
-            if fix_text:
-                st.markdown("**直し方**")
-                st.write(fix_text)
 
             if rewrite_example:
                 st.markdown("**言い換え例**")
@@ -1249,22 +1235,29 @@ def _render_quality_page_2_result() -> None:
                     style_level = "CAUTION"
             st.session_state[KEYS["style_level"]] = style_level
 
+    level = str(st.session_state.get(KEYS["diag_level"], "") or "")
+    diag_items = _load_payload(st.session_state.get(KEYS["diag_payload_json"], ""))
+
+    style_level = str(st.session_state.get(KEYS["style_level"], "") or "")
+    style_lines = str(st.session_state.get(KEYS["style_lines"], "") or "")
+    style_items = _load_payload(st.session_state.get(KEYS["style_payload_json"], ""))
+
+    # -------------------------
+    # 共通案内文（画面全体で1回だけ）
+    # 安全チェック・表記チェックのどちらかがCAUTIONの場合にまとめて表示する。
+    # -------------------------
+    if level == "CAUTION" or style_level == "CAUTION":
+        st.warning(_QUALITY_COMMON_CAUTION_NOTICE)
+
     # -------------------------
     # A. 内容の安全チェック
     # -------------------------
-    level = str(st.session_state.get(KEYS["diag_level"], "") or "")
-    diag_lines = str(st.session_state.get(KEYS["diag_lines"], "") or "")
-    diag_items = _load_payload(st.session_state.get(KEYS["diag_payload_json"], ""))
-
     _render_badge("公開前の確認", level)
 
-    if level:
-        if level == "RISK":
-            st.error("そのまま出す前に、根拠との照合が必要です。直せば前に進めます。")
-        elif level == "CAUTION":
-            st.warning("公開前に見直したい点があります。今のうちに確認すると安心です。")
-        else:
-            st.success("大きな問題は見つかっていません。公開前の最終確認がしやすい状態です。")
+    if level == "RISK":
+        st.error("そのまま出す前に、根拠との照合が必要です。直せば前に進めます。")
+    elif level == "SAFE":
+        st.success("大きな問題は見つかっていません。公開前の最終確認がしやすい状態です。")
 
     if diag_items:
         _render_buyer_diagnosis_blocks(diag_items)
@@ -1273,17 +1266,11 @@ def _render_quality_page_2_result() -> None:
     # -------------------------
     # B. 表記・言い回しチェック
     # -------------------------
-    style_level = str(st.session_state.get(KEYS["style_level"], "") or "")
-    style_lines = str(st.session_state.get(KEYS["style_lines"], "") or "")
-    style_items = _load_payload(st.session_state.get(KEYS["style_payload_json"], ""))
-
     if style_level or style_items or style_lines:
         st.divider()
         _render_badge("表記・言い回しの確認", style_level)
 
-        if style_level == "CAUTION":
-            st.info("内容の正しさとは別に、表記や言い回しを整えると、さらに読みやすくなります。")
-        elif style_level == "SAFE":
+        if style_level == "SAFE":
             st.success("表記や言い回しにも大きな問題は見つかっていません。")
 
         if style_items:
