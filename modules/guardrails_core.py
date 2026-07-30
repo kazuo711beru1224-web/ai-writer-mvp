@@ -1024,6 +1024,9 @@ def _is_high_impact_claim_topic(
         "登記", "保険", "医療", "薬", "診断",
         "治療", "金融", "控除", "給付",
         "基準額",
+        "手数料", "年会費", "継続手数料", "利用料",
+        "カード", "クレジットカード", "請求", "引き落とし",
+        "返金", "解約", "契約", "規約",
     )
     return any(word in blob for word in words)
 
@@ -1044,6 +1047,8 @@ def _claim_alignment_pending_findings(
         "計算", "算定", "合算", "割",
         "基準額", "税率", "控除",
         "期限", "締切", "対象者",
+        "可能性が高い", "ことがある", "場合がある",
+        "条件", "必要",
     )
     has_signal = any(signal in str(body_text or "") for signal in signals)
 
