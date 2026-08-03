@@ -2677,3 +2677,795 @@ def test_apply_consult_records_memo_write_trace_when_memo_is_actually_filled():
     trace = st.session_state.get(article_ui.ARTICLE_MEMO_WRITE_TRACE_KEY)
     assert trace
     assert trace[-1]["source"] == "_set_stage1_field_value"
+
+
+# =========================
+# reference_list（構造化確認資料）の復元・凍結
+# =========================
+
+def _reflist_payload(**overrides):
+    payload = dict(overrides)
+    return payload
+
+
+# --- 分類ヘルパー（_classify_reference_list_raw） ---
+
+def test_classify_reference_list_raw_key_missing():
+    kind, items = article_ui._classify_reference_list_raw({}, "k")
+    assert kind == article_ui._REFLIST_MISSING
+    assert items == []
+
+
+def test_classify_reference_list_raw_value_none():
+    kind, items = article_ui._classify_reference_list_raw({"k": None}, "k")
+    assert kind == article_ui._REFLIST_NONE
+    assert items == []
+
+
+def test_classify_reference_list_raw_empty_list():
+    kind, items = article_ui._classify_reference_list_raw({"k": []}, "k")
+    assert kind == article_ui._REFLIST_EMPTY
+    assert items == []
+
+
+def test_classify_reference_list_raw_valid_items():
+    raw = [{"url": "https://example.jp", "title": "t", "facts": "", "points": "", "text": ""}]
+    kind, items = article_ui._classify_reference_list_raw({"k": raw}, "k")
+    assert kind == article_ui._REFLIST_ITEMS
+    assert items == [{"url": "https://example.jp", "title": "t", "facts": "", "points": "", "text": "", "source_kind": ""}]
+
+
+def test_classify_reference_list_raw_all_sanitized_out():
+    # 非dict要素・全フィールド空のdictはsanitizeで脱落し、結果として全滅する。
+    raw = ["not-a-dict", {"url": "", "title": "", "facts": "", "points": "", "text": ""}]
+    kind, items = article_ui._classify_reference_list_raw({"k": raw}, "k")
+    assert kind == article_ui._REFLIST_ALL_SANITIZED_OUT
+    assert items == []
+
+
+def test_classify_reference_list_raw_invalid_types():
+    for bad_value in ("a string", {"a": "dict"}, 123, True, 1.5):
+        kind, items = article_ui._classify_reference_list_raw({"k": bad_value}, "k")
+        assert kind == article_ui._REFLIST_INVALID_TYPE, f"failed for {bad_value!r}"
+        assert items == []
+
+
+# --- フラグ読み取り（_read_bool_flag） ---
+
+def test_read_bool_flag_missing():
+    assert article_ui._read_bool_flag({}, "k") == (False, article_ui._FLAG_MISSING)
+
+
+def test_read_bool_flag_none():
+    assert article_ui._read_bool_flag({"k": None}, "k") == (False, article_ui._FLAG_NONE)
+
+
+def test_read_bool_flag_true():
+    assert article_ui._read_bool_flag({"k": True}, "k") == (True, article_ui._FLAG_TRUE)
+
+
+def test_read_bool_flag_false():
+    assert article_ui._read_bool_flag({"k": False}, "k") == (False, article_ui._FLAG_FALSE)
+
+
+def test_read_bool_flag_string_true_is_invalid_not_true():
+    # 文字列"true"はbool型ではないため、Trueとして誤認しない。
+    assert article_ui._read_bool_flag({"k": "true"}, "k") == (False, article_ui._FLAG_INVALID)
+
+
+def test_read_bool_flag_string_false_is_invalid_not_false_by_content():
+    # 内容("false")では判断せず、型が不正である事実だけを見る。
+    assert article_ui._read_bool_flag({"k": "false"}, "k") == (False, article_ui._FLAG_INVALID)
+
+
+def test_read_bool_flag_int_is_invalid():
+    assert article_ui._read_bool_flag({"k": 1}, "k") == (False, article_ui._FLAG_INVALID)
+
+
+# --- CAUTIONリストの型検証（_read_stored_caution_list） ---
+
+def test_read_stored_caution_list_missing_key():
+    assert article_ui._read_stored_caution_list({}, "k") == []
+
+
+def test_read_stored_caution_list_none():
+    assert article_ui._read_stored_caution_list({"k": None}, "k") == []
+
+
+def test_read_stored_caution_list_normal_list():
+    assert article_ui._read_stored_caution_list({"k": ["理由A", "理由B"]}, "k") == ["理由A", "理由B"]
+
+
+def test_read_stored_caution_list_empty_list():
+    assert article_ui._read_stored_caution_list({"k": []}, "k") == []
+
+
+def test_read_stored_caution_list_single_string_is_not_char_split():
+    # list("文字列")のように1文字ずつのリストへ壊れないことを確認する。
+    result = article_ui._read_stored_caution_list({"k": "由来不明の理由"}, "k")
+    assert result[0] == "由来不明の理由"
+    assert "文字列単体" in result[1]
+    assert len(result) == 2
+
+
+def test_read_stored_caution_list_dict_is_invalid_type():
+    result = article_ui._read_stored_caution_list({"k": {"a": 1}}, "k")
+    assert len(result) == 1
+    assert "型が不正です" in result[0]
+
+
+def test_read_stored_caution_list_number_is_invalid_type():
+    result = article_ui._read_stored_caution_list({"k": 123}, "k")
+    assert len(result) == 1
+    assert "型が不正です" in result[0]
+
+
+# --- 旧形式からの変換 ---
+
+def test_convert_legacy_current_fields_prefers_split_fields():
+    payload = {
+        article_ui.KEYS["evidence_url"]: "https://example.jp",
+        article_ui.KEYS["evidence_title"]: "資料名",
+        article_ui.KEYS["evidence_facts"]: "",
+        article_ui.KEYS["evidence_points"]: "",
+        article_ui.KEYS["evidence"]: "使われないはずの全文",
+    }
+    items = article_ui._convert_legacy_current_fields_to_reference_list(payload)
+    assert len(items) == 1
+    assert items[0]["source_kind"] == "legacy_split_fields"
+    assert items[0]["url"] == "https://example.jp"
+    assert "使われないはずの全文" not in items[0]["text"]
+
+
+def test_convert_legacy_current_fields_falls_back_to_monolithic_evidence_text():
+    payload = {article_ui.KEYS["evidence"]: "旧形式の全文証拠"}
+    items = article_ui._convert_legacy_current_fields_to_reference_list(payload)
+    assert len(items) == 1
+    assert items[0]["source_kind"] == "legacy_evidence_text"
+    assert items[0]["text"] == "旧形式の全文証拠"
+
+
+def test_convert_legacy_current_fields_empty_when_nothing_present():
+    assert article_ui._convert_legacy_current_fields_to_reference_list({}) == []
+
+
+def test_convert_legacy_proof_uses_proof_evidence_first():
+    payload = {
+        article_ui.KEYS["proof_evidence"]: "凍結された根拠",
+        article_ui.KEYS["proof_evidence_compact"]: "圧縮版",
+    }
+    items = article_ui._convert_legacy_proof_to_reference_list(payload)
+    assert len(items) == 1
+    assert items[0]["text"] == "凍結された根拠"
+    assert items[0]["source_kind"] == "legacy_proof_evidence"
+
+
+def test_convert_legacy_proof_falls_back_to_compact_when_full_text_blank():
+    payload = {article_ui.KEYS["proof_evidence_compact"]: "圧縮版のみ"}
+    items = article_ui._convert_legacy_proof_to_reference_list(payload)
+    assert items[0]["text"] == "圧縮版のみ"
+
+
+def test_convert_legacy_proof_empty_when_nothing_present():
+    assert article_ui._convert_legacy_proof_to_reference_list({}) == []
+
+
+# --- 現在資料の復元（_resolve_reference_list_for_restore_current） ---
+
+def _current_payload(**overrides):
+    base = {
+        article_ui.KEYS["evidence_url"]: "https://example.jp",
+        article_ui.KEYS["evidence_title"]: "資料名",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_current_restore_key_missing_with_legacy_present_uses_legacy():
+    result = article_ui._resolve_reference_list_for_restore_current(_current_payload())
+    assert result.source == "legacy"
+    assert len(result.items) == 1
+    assert result.caution_reasons == []
+
+
+def test_current_restore_key_missing_without_legacy_is_empty():
+    result = article_ui._resolve_reference_list_for_restore_current({})
+    assert result.source == "empty"
+    assert result.items == []
+
+
+def test_current_restore_empty_list_migrated_true_does_not_resurrect_legacy():
+    payload = _current_payload(**{
+        article_ui.KEYS["reference_list"]: [],
+        article_ui.KEYS["reference_list_migrated"]: True,
+    })
+    result = article_ui._resolve_reference_list_for_restore_current(payload)
+    assert result.items == []
+    assert result.source == "empty"
+    assert result.state == "valid"
+
+
+def test_current_restore_empty_list_migrated_false_uses_legacy():
+    payload = _current_payload(**{
+        article_ui.KEYS["reference_list"]: [],
+        article_ui.KEYS["reference_list_migrated"]: False,
+    })
+    result = article_ui._resolve_reference_list_for_restore_current(payload)
+    assert result.source == "legacy"
+    assert len(result.items) == 1
+
+
+def test_current_restore_invalid_type_with_legacy_falls_back_with_caution():
+    payload = _current_payload(**{article_ui.KEYS["reference_list"]: "broken"})
+    result = article_ui._resolve_reference_list_for_restore_current(payload)
+    assert result.source == "legacy"
+    assert result.caution_reasons
+
+
+def test_current_restore_invalid_type_without_legacy_is_unknown():
+    payload = {article_ui.KEYS["reference_list"]: "broken"}
+    result = article_ui._resolve_reference_list_for_restore_current(payload)
+    assert result.items == []
+    assert result.source == "unknown"
+    assert result.caution_reasons
+
+
+def test_current_restore_migrated_flag_invalid_never_resurrects_legacy_for_any_kind():
+    # 削除資料の復活防止：migratedが型不正なら、reference_listがどんな状態
+    # (キーなし/None/空/不正型/全滅)でも、旧4項目があってもフォールバックしない。
+    variants = {
+        "missing": {},
+        "none": {article_ui.KEYS["reference_list"]: None},
+        "empty": {article_ui.KEYS["reference_list"]: []},
+        "invalid_type": {article_ui.KEYS["reference_list"]: "broken"},
+        "all_sanitized_out": {article_ui.KEYS["reference_list"]: ["not-a-dict"]},
+    }
+    for label, extra in variants.items():
+        for bad_flag in ("true", "false", 1, 0):
+            payload = _current_payload(**extra, **{article_ui.KEYS["reference_list_migrated"]: bad_flag})
+            result = article_ui._resolve_reference_list_for_restore_current(payload)
+            assert result.items == [], f"failed for kind={label}, flag={bad_flag!r}"
+            assert result.source == "unknown", f"failed for kind={label}, flag={bad_flag!r}"
+            assert result.caution_reasons
+
+
+def test_current_restore_migrated_true_but_array_broken_does_not_resurrect_legacy():
+    # migrated=True(確定bool)なのに配列が不正型 → 矛盾としてCAUTION、旧形式は使わない。
+    payload = _current_payload(**{
+        article_ui.KEYS["reference_list"]: "broken",
+        article_ui.KEYS["reference_list_migrated"]: True,
+    })
+    result = article_ui._resolve_reference_list_for_restore_current(payload)
+    assert result.items == []
+    assert result.source == "unknown"
+    assert result.caution_reasons
+
+
+def test_current_restore_valid_items_are_adopted_regardless_of_migrated_flag_type():
+    raw_items = [{"url": "https://example.jp", "title": "", "facts": "", "points": "", "text": ""}]
+    for bad_flag in ("true", None, 1):
+        payload = {
+            article_ui.KEYS["reference_list"]: raw_items,
+            article_ui.KEYS["reference_list_migrated"]: bad_flag,
+        }
+        result = article_ui._resolve_reference_list_for_restore_current(payload)
+        assert result.source == "structured"
+        assert len(result.items) == 1
+
+
+def test_current_restore_migrated_true_with_key_missing_is_confirmed_empty():
+    # 自動保存は空リストをキーごと落とすため（app._safe_dump_state）、
+    # 確定Trueならキー欠如も「確定した空」として扱う（矛盾のCAUTIONを出さない）。
+    payload = {article_ui.KEYS["reference_list_migrated"]: True}
+    result = article_ui._resolve_reference_list_for_restore_current(payload)
+    assert result.items == []
+    assert result.source == "empty"
+    assert result.state == "valid"
+    assert result.caution_reasons == []
+
+
+# --- 凍結資料の復元（_resolve_reference_list_for_restore_proof） ---
+
+_VALID_PROOF_ITEMS = [{"url": "https://example.jp", "title": "凍結資料", "facts": "", "points": "", "text": ""}]
+
+
+def _proof_payload(**overrides):
+    base = {article_ui.KEYS["proof_evidence"]: "旧形式の凍結証拠"}
+    base.update(overrides)
+    return base
+
+
+def test_proof_restore_frozen_true_with_items_adopts_and_preserves_legacy_source():
+    payload = {
+        article_ui.KEYS["proof_reference_list"]: _VALID_PROOF_ITEMS,
+        article_ui.KEYS["proof_reference_list_frozen"]: True,
+        article_ui.KEYS["proof_reference_source"]: "legacy",
+    }
+    result = article_ui._resolve_reference_list_for_restore_proof(payload)
+    assert result.source == "legacy"
+    assert result.state == "valid"
+    assert len(result.items) == 1
+
+
+def test_proof_restore_frozen_true_with_items_source_structured_preserved():
+    payload = {
+        article_ui.KEYS["proof_reference_list"]: _VALID_PROOF_ITEMS,
+        article_ui.KEYS["proof_reference_list_frozen"]: True,
+        article_ui.KEYS["proof_reference_source"]: "structured",
+    }
+    result = article_ui._resolve_reference_list_for_restore_proof(payload)
+    assert result.source == "structured"
+
+
+def test_proof_restore_items_present_but_frozen_not_confirmed_true_are_never_adopted():
+    # frozen=True以外(False/None/キーなし/不正型)では、有効に見えるitemsでも
+    # 「確定した凍結証拠」として採用しない。
+    variants = {
+        "false": {article_ui.KEYS["proof_reference_list_frozen"]: False},
+        "none": {article_ui.KEYS["proof_reference_list_frozen"]: None},
+        "missing": {},
+        "invalid_type": {article_ui.KEYS["proof_reference_list_frozen"]: "true"},
+    }
+    for label, extra in variants.items():
+        payload = {article_ui.KEYS["proof_reference_list"]: _VALID_PROOF_ITEMS, **extra}
+        result = article_ui._resolve_reference_list_for_restore_proof(payload)
+        assert result.items == [], f"failed for {label}"
+        assert result.source == "unknown", f"failed for {label}"
+        assert result.state == "frozen_not_confirmed", f"failed for {label}"
+        assert result.caution_reasons, f"failed for {label}"
+
+
+def test_proof_restore_source_unknown_or_empty_is_not_inferred_to_structured_or_legacy():
+    # frozen=Trueかつ有効itemsがあっても、sourceが由来として矛盾/不明なら
+    # "structured"へは推定補正せず、source="unknown"のまま保持する。
+    bad_sources = (None, "empty", "unknown", "not-a-real-source", 123)
+    for bad_source in bad_sources:
+        payload = {
+            article_ui.KEYS["proof_reference_list"]: _VALID_PROOF_ITEMS,
+            article_ui.KEYS["proof_reference_list_frozen"]: True,
+            article_ui.KEYS["proof_reference_source"]: bad_source,
+        }
+        result = article_ui._resolve_reference_list_for_restore_proof(payload)
+        assert len(result.items) == 1, f"failed for {bad_source!r}"
+        assert result.source == "unknown", f"failed for {bad_source!r}"
+        assert result.state == "valid_with_caution", f"failed for {bad_source!r}"
+        assert result.caution_reasons, f"failed for {bad_source!r}"
+
+
+def test_proof_restore_source_missing_key_is_also_unknown_not_structured():
+    payload = {
+        article_ui.KEYS["proof_reference_list"]: _VALID_PROOF_ITEMS,
+        article_ui.KEYS["proof_reference_list_frozen"]: True,
+    }
+    result = article_ui._resolve_reference_list_for_restore_proof(payload)
+    assert result.source == "unknown"
+    assert result.state == "valid_with_caution"
+
+
+def test_proof_restore_fallback_allowed_only_when_both_keys_missing():
+    # 唯一のフォールバック許可条件：proof_reference_list・frozenキーが
+    # どちらも存在しない（新形式導入前の記事）。
+    payload = _proof_payload()
+    result = article_ui._resolve_reference_list_for_restore_proof(payload)
+    assert result.source == "legacy"
+    assert len(result.items) == 1
+
+
+def test_proof_restore_fallback_denied_when_either_key_present_even_if_falsy():
+    # proofリストのキーはないがfrozenキーは存在する／proofリスト=[]や
+    # None／frozen=False/None/不正型、いずれの組み合わせでも旧証拠へ
+    # フォールバックしない。
+    variants = {
+        "list_missing_frozen_false": {article_ui.KEYS["proof_reference_list_frozen"]: False},
+        "list_missing_frozen_none": {article_ui.KEYS["proof_reference_list_frozen"]: None},
+        "list_empty_frozen_missing": {article_ui.KEYS["proof_reference_list"]: []},
+        "list_empty_frozen_false": {
+            article_ui.KEYS["proof_reference_list"]: [],
+            article_ui.KEYS["proof_reference_list_frozen"]: False,
+        },
+        "list_empty_frozen_none": {
+            article_ui.KEYS["proof_reference_list"]: [],
+            article_ui.KEYS["proof_reference_list_frozen"]: None,
+        },
+        "list_none_frozen_missing": {article_ui.KEYS["proof_reference_list"]: None},
+    }
+    for label, extra in variants.items():
+        payload = _proof_payload(**extra)
+        result = article_ui._resolve_reference_list_for_restore_proof(payload)
+        assert result.items == [], f"failed for {label}"
+        assert result.source == "unknown", f"failed for {label}"
+        assert result.caution_reasons, f"failed for {label}"
+
+
+def test_proof_restore_none_value_is_distinct_from_missing_for_fallback():
+    # NONE_VALUE(キーは存在するが値がNone)はMISSINGとして扱わない。
+    payload = _proof_payload(**{article_ui.KEYS["proof_reference_list"]: None})
+    result_none = article_ui._resolve_reference_list_for_restore_proof(payload)
+    result_missing = article_ui._resolve_reference_list_for_restore_proof(_proof_payload())
+    assert result_none.source == "unknown"
+    assert result_missing.source == "legacy"
+
+
+def test_proof_restore_frozen_true_with_key_missing_is_confirmed_empty():
+    payload = {article_ui.KEYS["proof_reference_list_frozen"]: True}
+    result = article_ui._resolve_reference_list_for_restore_proof(payload)
+    assert result.items == []
+    assert result.source == "empty"
+    assert result.state == "valid"
+
+
+def test_proof_restore_frozen_true_with_empty_list_is_confirmed_empty():
+    payload = {
+        article_ui.KEYS["proof_reference_list"]: [],
+        article_ui.KEYS["proof_reference_list_frozen"]: True,
+    }
+    result = article_ui._resolve_reference_list_for_restore_proof(payload)
+    assert result.items == []
+    assert result.source == "empty"
+
+
+def test_proof_restore_all_sanitized_out_does_not_fall_back_even_with_legacy_evidence():
+    # ALL_SANITIZED_OUTはproof_reference_listキー自体は存在する（中身が不正）
+    # ため、「両方のキーが存在しない」というフォールバック許可条件を満たさない。
+    payload = _proof_payload(**{article_ui.KEYS["proof_reference_list"]: ["not-a-dict"]})
+    result = article_ui._resolve_reference_list_for_restore_proof(payload)
+    assert result.items == []
+    assert result.source == "unknown"
+    assert result.caution_reasons
+
+
+def test_proof_restore_invalid_type_without_legacy_is_unknown_with_caution():
+    payload = {article_ui.KEYS["proof_reference_list"]: "broken"}
+    result = article_ui._resolve_reference_list_for_restore_proof(payload)
+    assert result.items == []
+    assert result.source == "unknown"
+    assert result.caution_reasons
+
+
+def test_proof_restore_stored_caution_is_resurfaced_on_every_restore():
+    # 生成時に確定したCAUTIONは、復元のたびに再提示される（消えない）。
+    payload = {
+        article_ui.KEYS["proof_reference_list_frozen"]: "invalid",
+        article_ui.KEYS["proof_reference_caution"]: ["過去に記録された異常理由"],
+    }
+    result = article_ui._resolve_reference_list_for_restore_proof(payload)
+    assert "過去に記録された異常理由" in result.caution_reasons
+
+
+# --- 生成ゲート（_can_generate_with_reference_list） ---
+
+def test_can_generate_true_for_structured_legacy_empty():
+    for source in ("structured", "legacy", "empty"):
+        result = article_ui.RestoreResult(items=[], source=source, state="valid", caution_reasons=[])
+        assert article_ui._can_generate_with_reference_list(result) is True
+
+
+def test_can_generate_false_for_unknown():
+    result = article_ui.RestoreResult(items=[], source="unknown", state="flag_invalid", caution_reasons=["x"])
+    assert article_ui._can_generate_with_reference_list(result) is False
+
+
+def test_generation_blocked_message_is_plain_language():
+    message = article_ui._reference_list_generation_blocked_message()
+    assert "確認資料" in message
+    assert "型" not in message  # 技術的な理由（型不正など）を利用者に見せない
+    assert "invalid" not in message.lower()
+
+
+# --- 凍結処理（_freeze_reference_list_for_proof） ---
+
+def test_freeze_reference_list_for_proof_writes_all_fields_from_effective():
+    effective = article_ui.RestoreResult(
+        items=[{"text": "凍結された資料"}], source="legacy", state="missing", caution_reasons=["注意事項"],
+    )
+    updates = article_ui._freeze_reference_list_for_proof(effective)
+    assert updates[article_ui.KEYS["proof_reference_list"]] == effective.items
+    assert updates[article_ui.KEYS["proof_reference_list_frozen"]] is True
+    assert updates[article_ui.KEYS["proof_reference_source"]] == "legacy"
+    assert updates[article_ui.KEYS["proof_reference_state"]] == "missing"
+    assert updates[article_ui.KEYS["proof_reference_caution"]] == ["注意事項"]
+
+
+# --- 由来テキストのレンダリング・圧縮 ---
+
+def test_render_reference_list_items_as_text_joins_multiple_items():
+    items = [{"text": "資料1"}, {"text": "資料2"}]
+    assert article_ui._render_reference_list_items_as_text(items) == "資料1\n\n資料2"
+
+
+def test_render_reference_list_items_as_text_empty_is_empty_string():
+    assert article_ui._render_reference_list_items_as_text([]) == ""
+
+
+def test_should_skip_reference_list_compaction_true_for_split_fields_source():
+    items = [{"source_kind": "legacy_split_fields"}]
+    assert article_ui._should_skip_reference_list_compaction(items) is True
+
+
+def test_should_skip_reference_list_compaction_false_for_monolithic_text_source():
+    items = [{"source_kind": "legacy_evidence_text"}]
+    assert article_ui._should_skip_reference_list_compaction(items) is False
+
+
+# --- 保存操作がproof_*に触れないことの確認 ---
+
+def test_take_snapshot_does_not_include_any_proof_reference_keys():
+    _reset_session_state()
+    snapshot = article_ui._take_snapshot()
+    assert article_ui.KEYS["proof_reference_list"] not in snapshot
+    assert article_ui.KEYS["proof_reference_list_frozen"] not in snapshot
+    assert article_ui.KEYS["proof_reference_source"] not in snapshot
+    assert article_ui.KEYS["proof_reference_state"] not in snapshot
+    assert article_ui.KEYS["proof_reference_caution"] not in snapshot
+
+
+# --- 初期化まわり ---
+
+def test_ensure_keys_initialized_sets_list_type_defaults_not_empty_string():
+    _reset_session_state()
+    article_ui._ensure_keys_initialized()
+    assert st.session_state[article_ui.KEYS["reference_list"]] == []
+    assert st.session_state[article_ui.KEYS["proof_reference_list"]] == []
+    assert st.session_state[article_ui.KEYS["proof_reference_caution"]] == []
+    assert st.session_state[article_ui.KEYS["reference_list_migrated"]] is False
+    assert st.session_state[article_ui.KEYS["proof_reference_list_frozen"]] is False
+    assert st.session_state[article_ui.KEYS["proof_reference_source"]] is None
+    assert st.session_state[article_ui.KEYS["proof_reference_state"]] is None
+
+
+def test_reference_list_block_notice_is_excluded_from_persist_keys():
+    assert article_ui.KEYS["reference_list_block_notice"] not in get_article_persist_keys()
+
+
+def test_reference_list_keys_are_included_in_persist_keys():
+    for name in (
+        "reference_list", "reference_list_migrated", "proof_reference_list",
+        "proof_reference_list_frozen", "proof_reference_source",
+        "proof_reference_state", "proof_reference_caution",
+    ):
+        assert article_ui.KEYS[name] in get_article_persist_keys()
+
+
+def test_reference_list_block_notice_key_uses_tmp_prefix_for_autosave_exclusion():
+    # app.STATE_EXCLUDE_PREFIXESの"tmp__"に一致し、自動保存の対象から
+    # 自動的に除外されることを確認する。
+    assert article_ui.KEYS["reference_list_block_notice"].startswith("tmp__")
+
+
+# --- 生成フロー全体（ボタン押下）を通した統合テスト ---
+
+def _set_minimal_draft_inputs():
+    st.session_state[ARTICLE_ACTIVE_PAGE_KEY] = ARTICLE_PAGE_DRAFT
+    st.session_state[KEYS["consult_situation"]] = "テスト用の状況です。"
+    st.session_state[KEYS["consult_question"]] = "テスト用の質問です。"
+
+
+def test_generate_draft_succeeds_with_normal_empty_reference_list_and_freezes_empty(monkeypatch):
+    _reset_session_state()
+    _set_minimal_draft_inputs()
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: label == "✨ 下書きを作る")
+
+    render_article_ui(**_common_kwargs())
+
+    assert str(st.session_state.get(KEYS["last_text"], "")).strip() != ""
+    assert st.session_state[KEYS["proof_reference_list"]] == []
+    assert st.session_state[KEYS["proof_reference_list_frozen"]] is True
+    assert st.session_state[KEYS["proof_reference_source"]] == "empty"
+
+
+def test_generate_draft_blocks_when_reference_list_state_is_unknown(monkeypatch):
+    _reset_session_state()
+    _set_minimal_draft_inputs()
+    # migrated=True(確定bool)なのにreference_listが不正型 → unknown。
+    st.session_state[KEYS["reference_list"]] = "broken"
+    st.session_state[KEYS["reference_list_migrated"]] = True
+
+    errors = []
+    monkeypatch.setattr(st, "error", lambda text: errors.append(text))
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: label == "✨ 下書きを作る")
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["last_text"]] == ""
+    assert any("確認資料の保存状態に問題がある" in e for e in errors)
+    assert st.session_state[KEYS["reference_list_block_notice"]]
+
+
+def test_generate_draft_blocked_attempt_does_not_disturb_previous_proof_evidence(monkeypatch):
+    _reset_session_state()
+    _set_minimal_draft_inputs()
+
+    # 直前の成功した生成に対応する既存の証拠を再現する。
+    st.session_state[KEYS["last_text"]] = "直前に成功した本文"
+    article_ui._set_form_data_value("last_text", "直前に成功した本文")
+    st.session_state[KEYS["proof_evidence"]] = "直前の証拠テキスト"
+    st.session_state[KEYS["proof_evidence_compact"]] = "直前の証拠テキスト(圧縮)"
+    st.session_state[KEYS["proof_reference_list"]] = [{"text": "直前の凍結資料"}]
+    st.session_state[KEYS["proof_reference_list_frozen"]] = True
+    st.session_state[KEYS["proof_reference_source"]] = "legacy"
+
+    # 今回の試行だけreference_listを壊す。
+    st.session_state[KEYS["reference_list"]] = "broken"
+    st.session_state[KEYS["reference_list_migrated"]] = True
+
+    monkeypatch.setattr(st, "error", lambda text: None)
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: label == "✨ 下書きを作る")
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["last_text"]] == "直前に成功した本文"
+    assert st.session_state[KEYS["proof_evidence"]] == "直前の証拠テキスト"
+    assert st.session_state[KEYS["proof_evidence_compact"]] == "直前の証拠テキスト(圧縮)"
+    assert st.session_state[KEYS["proof_reference_list"]] == [{"text": "直前の凍結資料"}]
+    assert st.session_state[KEYS["proof_reference_list_frozen"]] is True
+    assert st.session_state[KEYS["proof_reference_source"]] == "legacy"
+
+
+def test_generate_draft_freezes_legacy_derived_reference_list_matching_generation_evidence(monkeypatch):
+    _reset_session_state()
+    _set_minimal_draft_inputs()
+    st.session_state[KEYS["evidence_facts"]] = "重要な事実：手数料は年1回2000円。"
+
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: label == "✨ 下書きを作る")
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["proof_reference_source"]] == "legacy"
+    assert st.session_state[KEYS["proof_reference_list_frozen"]] is True
+    frozen_items = st.session_state[KEYS["proof_reference_list"]]
+    assert len(frozen_items) == 1
+
+    # 生成に実際使った資料（frozen items）から組み立てたテキストと、
+    # proof_evidenceの内容が完全に一致することを確認する（証拠の一致性）。
+    expected_text = article_ui._render_reference_list_items_as_text(frozen_items)
+    assert st.session_state[KEYS["proof_evidence"]] == expected_text
+    assert "手数料は年1回2000円" in st.session_state[KEYS["proof_evidence"]]
+
+    # 旧来の独立関数が生成していたであろう内容と等価であることも確認する
+    # （proof_evidenceの由来切り替えによる回帰がないことの保証）。
+    legacy_equivalent = article_ui._get_effective_input_evidence_text()
+    assert st.session_state[KEYS["proof_evidence"]] == legacy_equivalent
+
+
+def test_generate_draft_reference_list_block_notice_cleared_after_success(monkeypatch):
+    _reset_session_state()
+    _set_minimal_draft_inputs()
+    st.session_state[KEYS["reference_list_block_notice"]] = ["前回の停止理由"]
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: label == "✨ 下書きを作る")
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["reference_list_block_notice"]] == []
+
+
+# =========================
+# proof_reference_restore_diagnostics（復元時の内部診断）
+# =========================
+
+def test_a_guardrail_meter_with_unresolved_diagnostics_forces_caution_and_hides_safe(monkeypatch):
+    _reset_session_state()
+    st.session_state[KEYS["proof_reference_restore_diagnostics"]] = ["過去に検出した型異常"]
+
+    # 実在の検証済みSAFEフィクスチャ（tests/test_guardrails_promotion.py）を再利用する。
+    safe_body = (
+        "店頭POPです。お客様におにぎりと温かい飲み物をおすすめすることが重要です。"
+        "今後の売り場作りにも必要です。"
+    )
+    baseline = article_ui.evaluate_guardrails(body_text=safe_body, evidence_text="", root_mode=True)
+    assert baseline.level == "SAFE"
+
+    writes, warnings, successes = [], [], []
+    monkeypatch.setattr(st, "write", lambda text: writes.append(text))
+    monkeypatch.setattr(st, "warning", lambda text: warnings.append(text))
+    monkeypatch.setattr(st, "success", lambda text: successes.append(text))
+
+    level = article_ui._render_guardrail_meter(body_text=safe_body, evidence_text="")
+
+    assert level == "CAUTION"
+    assert successes == []
+    assert any("CAUTION" in w for w in writes)
+    assert any("確認資料の保存状態" in w for w in warnings)
+    # 表示だけでは診断は消えない
+    assert st.session_state[KEYS["proof_reference_restore_diagnostics"]] == ["過去に検出した型異常"]
+
+
+def test_b_restore_diagnostics_cleared_after_fully_successful_generation(monkeypatch):
+    _reset_session_state()
+    _set_saison_money_contract_inputs()
+    st.session_state[KEYS["evidence_points"]] = "異議申し立てができる場合があると規約に明記されている。"
+    st.session_state[KEYS["proof_reference_restore_diagnostics"]] = ["過去に検出した型異常"]
+
+    monkeypatch.setattr(st, "warning", lambda text: None)
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: label == "✨ 下書きを作る")
+    monkeypatch.setattr(
+        article_ui,
+        "generate_markdown",
+        _fake_generate_markdown_two_calls("## 見出し1\n## 見出し2", _SAISON_UNGROUNDED_BODY),
+    )
+
+    render_article_ui(**_common_kwargs())
+
+    # 生成・照合・保存がすべて成功したこと
+    assert st.session_state[KEYS["last_text"]] == _SAISON_UNGROUNDED_BODY
+    assert st.session_state[KEYS["money_contract_block_terms"]] == ""
+    # 内部診断は消去される
+    assert KEYS["proof_reference_restore_diagnostics"] not in st.session_state
+
+
+def test_c_restore_diagnostics_preserved_when_input_validation_blocks_generation(monkeypatch):
+    _reset_session_state()
+    _set_minimal_draft_inputs()
+    # migrated=True(確定bool)なのにreference_listが不正型 → unknown。API呼出し前に停止する。
+    st.session_state[KEYS["reference_list"]] = "broken"
+    st.session_state[KEYS["reference_list_migrated"]] = True
+    st.session_state[KEYS["proof_reference_restore_diagnostics"]] = ["過去に検出した型異常"]
+
+    monkeypatch.setattr(st, "error", lambda text: None)
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: label == "✨ 下書きを作る")
+
+    render_article_ui(**_common_kwargs())
+
+    assert st.session_state[KEYS["last_text"]] == ""
+    assert st.session_state[KEYS["proof_reference_restore_diagnostics"]] == ["過去に検出した型異常"]
+
+
+def test_d_restore_diagnostics_preserved_and_old_article_not_overwritten_on_grounding_rejection(monkeypatch):
+    _reset_session_state()
+    _set_saison_money_contract_inputs()
+    st.session_state[KEYS["proof_reference_restore_diagnostics"]] = ["過去に検出した型異常"]
+
+    # 保存済みの旧記事・旧証拠を用意する。
+    st.session_state[KEYS["last_text"]] = "保存済みの旧記事"
+    article_ui._set_form_data_value("last_text", "保存済みの旧記事")
+    st.session_state[KEYS["copy_text"]] = "保存済みの旧コピー"
+    article_ui._set_form_data_value("copy_text", "保存済みの旧コピー")
+    st.session_state[KEYS["proof_evidence"]] = "保存済みの旧証拠"
+
+    warnings, successes, writes, markdowns = [], [], [], []
+    monkeypatch.setattr(st, "warning", lambda text: warnings.append(text))
+    monkeypatch.setattr(st, "success", lambda text: successes.append(text))
+    monkeypatch.setattr(st, "write", lambda text, *a, **k: writes.append(str(text)))
+    monkeypatch.setattr(st, "markdown", lambda text, *a, **k: markdowns.append(str(text)))
+    monkeypatch.setattr(st, "button", lambda label, **kwargs: label == "✨ 下書きを作る")
+    monkeypatch.setattr(
+        article_ui,
+        "generate_markdown",
+        _fake_generate_markdown_two_calls("## 見出し1\n## 見出し2", _SAISON_UNGROUNDED_BODY),
+    )
+
+    render_article_ui(**_common_kwargs())
+
+    # planning・writingへ到達した後、根拠不足で保存拒否される
+    assert st.session_state[KEYS["money_contract_block_terms"]] == "異議申し立て"
+
+    # 旧記事・旧証拠は上書きされない
+    assert st.session_state[KEYS["last_text"]] == "保存済みの旧記事"
+    assert article_ui._get_form_data_value("last_text") == "保存済みの旧記事"
+    assert st.session_state[KEYS["copy_text"]] == "保存済みの旧コピー"
+    assert article_ui._get_form_data_value("copy_text") == "保存済みの旧コピー"
+    assert st.session_state[KEYS["proof_evidence"]] == "保存済みの旧証拠"
+
+    # 内部診断は保持される
+    assert st.session_state[KEYS["proof_reference_restore_diagnostics"]] == ["過去に検出した型異常"]
+
+    # 今回の生成成功を意味する成功表示は一切出ない。
+    assert successes == []
+
+    # 表示された全文字列のどこにも「下書きができました」は出ない。
+    all_texts = warnings + successes + writes + markdowns
+    assert not any("下書きができました" in t for t in all_texts)
+
+    # 保存拒否warningが表示され、下に表示されるのは今回ではなく
+    # それ以前に保存された下書きであることが明示される
+    # （今回の生成が成功したという誤解を防ぐ、既存の案内文言を確認する）。
+    assert any("異議申し立て" in w for w in warnings)
+    assert any("それ以前に保存された下書きです" in w for w in warnings)
+
+    # 「下書きができました」という、今回の生成成功を意味する文言は出ない。
+    assert not any("下書きができました" in s for s in successes)
+    # last_textが非空（旧記事）のため、既存記事のサンプル表示成功文言が
+    # 別途表示されうるが、これは今回の生成結果を示すものではないことを、
+    # 実際に表示された文言でも確認する（「サンプルを表示しました」以外の
+    # 成功文言は出ない）。
+    for success_text in successes:
+        assert "サンプルを表示しました" in success_text

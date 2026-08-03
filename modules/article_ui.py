@@ -1,17 +1,20 @@
 from __future__ import annotations
 
-from typing import Dict, Set, List, Tuple, Any
+from typing import Dict, Set, List, Tuple, Any, Mapping, NamedTuple
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import dataclasses
 import html
 import json
+import logging
 import re
 
 import streamlit as st
 import streamlit.components.v1 as components
 
 from modules.guardrails_core import evaluate_guardrails
+from modules.guardrails_types import max_level_from_list
 from modules.diagnosis_templates import build_buyer_diagnosis
 from modules.quality_ui import KEYS as _QUALITY_KEYS, QUALITY_MENU_LABEL
 from openai_runtime import generate_markdown, OpenAIRuntimeError
@@ -44,6 +47,29 @@ KEYS: Dict[str, str] = {
     "proof_evidence_compact": "article__proof_evidence_compact",
     "proof_suggest": "article__proof_suggest",
     "proof_memo": "article__proof_memo",
+
+    # 構造化確認資料（reference_list）。現在資料はユーザーが編集し続ける
+    # 可変な入力、凍結資料は生成時点で一度だけ確定するスナップショット。
+    # 詳細は _resolve_reference_list_for_restore_current/_proof の docstring を参照。
+    "reference_list": "article__reference_list",
+    "reference_list_migrated": "article__reference_list_migrated",
+    "proof_reference_list": "article__proof_reference_list",
+    "proof_reference_list_frozen": "article__proof_reference_list_frozen",
+    "proof_reference_source": "article__proof_reference_source",
+    "proof_reference_state": "article__proof_reference_state",
+    "proof_reference_caution": "article__proof_reference_caution",
+
+    # 生成を停止した今回の試行だけに紐づく一時的な通知。生成証拠
+    # （proof_reference_caution）とは別枠で扱うため、tmp__プレフィックスで
+    # 自動保存（app._safe_dump_state）の対象から除外する。
+    "reference_list_block_notice": "tmp__article_reference_list_block_notice",
+
+    # 過去の凍結記録の復元時に検出された、内部向けの異常診断。
+    # 新しい記事の生成・照合・保存がすべて成功した時点で消去する
+    # （古い凍結記録は新しい内容で丸ごと置き換わるため）。それまでは
+    # 総合判定（_render_guardrail_meter）をSAFEにしない安全弁として使う。
+    # tmp__プレフィックスで自動保存の対象から除外する（このセッション限りの状態）。
+    "proof_reference_restore_diagnostics": "tmp__article_proof_reference_restore_diagnostics",
 
     "copy_agree_risk": "article__copy_agree_risk",
     "copy_text": "article__copy_text",
@@ -82,6 +108,15 @@ PERSIST_KEYS: Set[str] = {
     KEYS["tone_reg"],
     KEYS["plan_result"],
     KEYS["save_message"],
+    KEYS["reference_list"],
+    KEYS["reference_list_migrated"],
+    KEYS["proof_reference_list"],
+    KEYS["proof_reference_list_frozen"],
+    KEYS["proof_reference_source"],
+    KEYS["proof_reference_state"],
+    KEYS["proof_reference_caution"],
+    # reference_list_block_noticeは今回の試行だけの一時通知のため対象外
+    # （money_contract_block_termsと同じ扱い）。
 }
 
 # ページ（旧・ステップ）移動でWidgetが表示されなくなっても入力内容が
@@ -106,6 +141,8 @@ SHADOW_KEYS: Dict[str, str] = {
 }
 
 ARTICLE_AUTOSAVE_FILENAME = "autosave_state.json"
+
+_logger = logging.getLogger(__name__)
 
 UI_FLAG_KEYS: Tuple[str, ...] = (
     "article__show_current_evidence",
@@ -1073,6 +1110,21 @@ def _ensure_keys_initialized() -> None:
                 st.session_state[k] = {}
             elif k in (KEYS["copy_agree_risk"],):
                 st.session_state[k] = False
+            elif k in (
+                KEYS["reference_list"],
+                KEYS["proof_reference_list"],
+                KEYS["proof_reference_caution"],
+                KEYS["reference_list_block_notice"],
+                KEYS["proof_reference_restore_diagnostics"],
+            ):
+                # ""(空文字)で初期化すると、reference_list系の型判定
+                # （list以外はINVALID_TYPE）を毎回誤検知してしまうため、
+                # 空文字ではなく空リストで初期化する。
+                st.session_state[k] = []
+            elif k in (KEYS["reference_list_migrated"], KEYS["proof_reference_list_frozen"]):
+                st.session_state[k] = False
+            elif k in (KEYS["proof_reference_source"], KEYS["proof_reference_state"]):
+                st.session_state[k] = None
             else:
                 st.session_state[k] = ""
 
@@ -1180,6 +1232,315 @@ def _sync_evidence_text_from_parts() -> None:
 
     if built:
         st.session_state[KEYS["evidence"]] = built
+
+
+# =========================
+# reference_list（構造化確認資料）の復元・凍結
+# =========================
+# 設計の経緯: 現在資料（article__reference_list）はユーザーが編集し続ける
+# 可変な入力、凍結資料（article__proof_reference_list）は記事生成の瞬間に
+# 一度だけ確定する不変スナップショット。両者は移行状態・信頼できる確証の
+# レベルが異なるため、現在資料側のフラグを凍結資料側の判定に流用しない。
+#
+# 実装上の注意（app._safe_dump_state / _should_save_state_key に基づく）:
+# 自動保存は st.session_state を一括ダンプするが、value is None または
+# 空リスト/空辞書/空タプルのキーは丸ごと保存対象から除外される。そのため
+# 「確定した空リスト」を保存しても、保存ファイル上ではキー自体が存在しない
+# 状態（MISSING）に退化する。したがって flag_state が確定Trueのときは、
+# kindがEMPTY_LISTだけでなくMISSINGの場合も「確定した空」として扱う
+# （NONE_VALUEとは依然として区別する。NONE_VALUEはこのアプリの保存経路
+# からは生成されず、外部起因の値としてのみ現れうる）。
+
+_REFLIST_MISSING = "missing"
+_REFLIST_NONE = "none"
+_REFLIST_EMPTY = "empty_list"
+_REFLIST_ITEMS = "list_with_items"
+_REFLIST_ALL_SANITIZED_OUT = "all_sanitized_out"
+_REFLIST_INVALID_TYPE = "invalid_type"
+
+_FLAG_MISSING = "missing"
+_FLAG_NONE = "none"
+_FLAG_TRUE = "true"
+_FLAG_FALSE = "false"
+_FLAG_INVALID = "invalid_type"
+
+_REFERENCE_LIST_ITEM_TEXT_FIELDS: Tuple[str, ...] = ("url", "title", "facts", "points", "text")
+
+_REFERENCE_LIST_GENERATION_BLOCKED_MESSAGE = (
+    "確認資料の保存状態に問題があるため、このままでは安全に文章を作れません。"
+    "確認資料を開き、内容を確かめてからもう一度お試しください。"
+)
+
+
+class RestoreResult(NamedTuple):
+    items: List[Dict[str, str]]
+    source: str  # "structured" | "legacy" | "empty" | "unknown"
+    state: str   # "valid" | "valid_with_caution" | "missing" | "none" | "invalid_type"
+                 # | "all_sanitized_out" | "flag_invalid" | "frozen_not_confirmed" | "unknown"
+    caution_reasons: List[str]
+
+
+def _log_caution(reason: str) -> None:
+    _logger.warning(reason)
+
+
+def _sanitize_reference_list_items(raw_items: List[Any]) -> List[Dict[str, str]]:
+    sanitized: List[Dict[str, str]] = []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            continue
+        item = {
+            field: str(raw_item.get(field, "") or "").strip()
+            for field in _REFERENCE_LIST_ITEM_TEXT_FIELDS
+        }
+        if any(item.values()):
+            item["source_kind"] = str(raw_item.get("source_kind", "") or "")
+            sanitized.append(item)
+    return sanitized
+
+
+def _classify_reference_list_raw(payload: Mapping[str, Any], key: str) -> Tuple[str, List[Dict[str, str]]]:
+    if key not in payload:
+        return _REFLIST_MISSING, []
+    raw = payload.get(key)
+    if raw is None:
+        return _REFLIST_NONE, []
+    if not isinstance(raw, list):
+        return _REFLIST_INVALID_TYPE, []
+    if len(raw) == 0:
+        return _REFLIST_EMPTY, []
+    sanitized = _sanitize_reference_list_items(raw)
+    if len(sanitized) == 0:
+        return _REFLIST_ALL_SANITIZED_OUT, []
+    return _REFLIST_ITEMS, sanitized
+
+
+def _read_bool_flag(payload: Mapping[str, Any], key: str) -> Tuple[bool, str]:
+    if key not in payload:
+        return False, _FLAG_MISSING
+    raw = payload.get(key)
+    if raw is None:
+        return False, _FLAG_NONE
+    if isinstance(raw, bool):
+        return raw, (_FLAG_TRUE if raw else _FLAG_FALSE)
+    return False, _FLAG_INVALID
+
+
+def _read_stored_caution_list(payload: Mapping[str, Any], key: str) -> List[str]:
+    if key not in payload:
+        return []
+    raw = payload.get(key)
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        cleaned = [str(x) for x in raw if isinstance(x, str) and x.strip()]
+        if len(cleaned) != len(raw):
+            cleaned.append(
+                f"proof_reference_caution の一部要素が不正な形式でした（元の要素数={len(raw)}）"
+            )
+        return cleaned
+    if isinstance(raw, str):
+        base = [raw] if raw.strip() else []
+        base.append("proof_reference_caution が文字列単体で保存されていました（本来はリスト形式）")
+        return base
+    return [f"proof_reference_caution の型が不正です: {type(raw)}"]
+
+
+def _make_reference_list_item(
+    *, url: str = "", title: str = "", facts: str = "", points: str = "",
+    text: str = "", source_kind: str = "",
+) -> Dict[str, str]:
+    return {
+        "url": str(url or ""),
+        "title": str(title or ""),
+        "facts": str(facts or ""),
+        "points": str(points or ""),
+        "text": str(text or ""),
+        "source_kind": str(source_kind or ""),
+    }
+
+
+def _convert_legacy_current_fields_to_reference_list(payload: Mapping[str, Any]) -> List[Dict[str, str]]:
+    url = str(payload.get(KEYS["evidence_url"], "") or "").strip()
+    title = str(payload.get(KEYS["evidence_title"], "") or "").strip()
+    facts = str(payload.get(KEYS["evidence_facts"], "") or "").strip()
+    points = str(payload.get(KEYS["evidence_points"], "") or "").strip()
+    if url or title or facts or points:
+        return [_make_reference_list_item(
+            url=url, title=title, facts=facts, points=points,
+            text=build_evidence_text(url=url, title=title, facts=facts, points=points),
+            source_kind="legacy_split_fields",
+        )]
+    legacy_text = str(payload.get(KEYS["evidence"], "") or "").strip()
+    if legacy_text:
+        return [_make_reference_list_item(text=legacy_text, source_kind="legacy_evidence_text")]
+    return []
+
+
+def _convert_legacy_proof_to_reference_list(payload: Mapping[str, Any]) -> List[Dict[str, str]]:
+    text = (
+        str(payload.get(KEYS["proof_evidence"], "") or "").strip()
+        or str(payload.get(KEYS["proof_evidence_compact"], "") or "").strip()
+    )
+    if text:
+        return [_make_reference_list_item(text=text, source_kind="legacy_proof_evidence")]
+    return []
+
+
+def _render_reference_list_items_as_text(items: List[Dict[str, str]]) -> str:
+    if not items:
+        return ""
+    parts = []
+    for item in items:
+        parts.append(item.get("text") or build_evidence_text(
+            url=item.get("url", ""), title=item.get("title", ""),
+            facts=item.get("facts", ""), points=item.get("points", ""),
+        ))
+    return "\n\n".join(p for p in parts if p.strip())
+
+
+def _compact_reference_list_text(text: str) -> str:
+    compact_lines = _extract_key_fact_lines(text)
+    if compact_lines:
+        return "\n".join(compact_lines).strip()
+    return str(text or "").strip()
+
+
+def _should_skip_reference_list_compaction(items: List[Dict[str, str]]) -> bool:
+    # 分割欄（evidence_url/title/facts/points）から組み立てた資料は、既に
+    # 利用者が厳選した短い内容のため、優先語ベースの圧縮・除外を行わない
+    # （優先語に一致しない事実が丸ごと消える事故を防ぐため。
+    # _get_generation_evidence_text()の既存の扱いに合わせる）。
+    return any(item.get("source_kind") == "legacy_split_fields" for item in items)
+
+
+def _resolve_reference_list_for_restore_current(payload: Mapping[str, Any]) -> RestoreResult:
+    _flag_value, flag_state = _read_bool_flag(payload, KEYS["reference_list_migrated"])
+    kind, sanitized_items = _classify_reference_list_raw(payload, KEYS["reference_list"])
+    cautions: List[str] = []
+
+    if kind == _REFLIST_ITEMS:
+        if flag_state == _FLAG_INVALID:
+            cautions.append(
+                "reference_list_migrated の型が不正です"
+                "（structured itemsは採用）"
+            )
+        return RestoreResult(sanitized_items, "structured", "valid", cautions)
+
+    if kind == _REFLIST_ALL_SANITIZED_OUT:
+        cautions.append("article__reference_list: 全要素がsanitizeで無効化されました")
+    if kind == _REFLIST_INVALID_TYPE:
+        cautions.append(f"article__reference_list の型が不正です: {type(payload.get(KEYS['reference_list']))}")
+
+    if flag_state == _FLAG_INVALID:
+        cautions.append("reference_list_migrated の型が不正です。復活防止のため旧形式へフォールバックしません")
+        return RestoreResult([], "unknown", "flag_invalid", cautions)
+
+    if flag_state == _FLAG_TRUE:
+        # 自動保存は空リストをキーごと除外するため（_should_save_state_key）、
+        # 「確定Trueかつ配列キーが無い」は保存経路上ごく普通に発生する
+        # 「確定した空」であり、矛盾ではない。
+        if kind in (_REFLIST_EMPTY, _REFLIST_MISSING):
+            return RestoreResult([], "empty", "valid", cautions)
+        cautions.append("reference_list_migrated=True だが article__reference_list が正常な配列ではありません")
+        return RestoreResult([], "unknown", kind, cautions)
+
+    # flag_state in (_FLAG_MISSING, _FLAG_NONE, _FLAG_FALSE)
+    legacy_items = _convert_legacy_current_fields_to_reference_list(payload)
+    if legacy_items:
+        return RestoreResult(legacy_items, "legacy", kind, cautions)
+    source = "unknown" if kind in (_REFLIST_ALL_SANITIZED_OUT, _REFLIST_INVALID_TYPE) else "empty"
+    return RestoreResult([], source, kind, cautions)
+
+
+def _read_stored_source_no_inference(payload: Mapping[str, Any], key: str, cautions: List[str]) -> str:
+    raw = payload.get(key, None)
+    if raw in ("structured", "legacy"):
+        return raw
+    cautions.append(
+        "資料本文は確認できましたが、生成時の資料の由来を確認できません"
+        f"（proof_reference_source={raw!r}）"
+    )
+    return "unknown"
+
+
+def _resolve_reference_list_for_restore_proof(payload: Mapping[str, Any]) -> RestoreResult:
+    _flag_value, flag_state = _read_bool_flag(payload, KEYS["proof_reference_list_frozen"])
+    kind, sanitized_items = _classify_reference_list_raw(payload, KEYS["proof_reference_list"])
+    cautions = _read_stored_caution_list(payload, KEYS["proof_reference_caution"])
+
+    if kind == _REFLIST_ITEMS:
+        if flag_state == _FLAG_TRUE:
+            source = _read_stored_source_no_inference(payload, KEYS["proof_reference_source"], cautions)
+            state = "valid" if source in ("structured", "legacy") else "valid_with_caution"
+            return RestoreResult(sanitized_items, source, state, cautions)
+        cautions.append(
+            "proof_reference_list に有効な内容がありますが、frozenが確認できません"
+            f"（flag_state={flag_state}）。凍結証拠として採用しません"
+        )
+        return RestoreResult([], "unknown", "frozen_not_confirmed", cautions)
+
+    # 新形式導入前の記事（唯一のフォールバック許可条件）。
+    # MISSING(キー自体が存在しない)はflag_stateの確定Trueと組み合わせて
+    # 「確定した空」を表すこともあるため、必ずflag_state==_FLAG_MISSING
+    # (frozenキーも存在しない)まで確認してから判定する。
+    if kind == _REFLIST_MISSING and flag_state == _FLAG_MISSING:
+        legacy_items = _convert_legacy_proof_to_reference_list(payload)
+        if legacy_items:
+            return RestoreResult(legacy_items, "legacy", kind, cautions)
+        return RestoreResult([], "empty", kind, cautions)
+
+    if kind == _REFLIST_ALL_SANITIZED_OUT:
+        cautions.append("article__proof_reference_list: 全要素がsanitizeで無効化されました")
+    if kind == _REFLIST_INVALID_TYPE:
+        cautions.append(f"article__proof_reference_list の型が不正です: {type(payload.get(KEYS['proof_reference_list']))}")
+
+    if flag_state == _FLAG_TRUE and kind in (_REFLIST_EMPTY, _REFLIST_MISSING):
+        return RestoreResult([], "empty", "valid", cautions)
+
+    if flag_state == _FLAG_INVALID:
+        cautions.append("proof_reference_list_frozen の型が不正です。復活防止のため proof_evidence へフォールバックしません")
+        return RestoreResult([], "unknown", "flag_invalid", cautions)
+
+    cautions.append(
+        f"新形式が導入済みの記録ですが状態が確定できません（kind={kind}, flag_state={flag_state}）。"
+        "proof_evidence へフォールバックしません"
+    )
+    return RestoreResult([], "unknown", kind, cautions)
+
+
+def _get_effective_reference_list_for_generation(payload: Mapping[str, Any]) -> RestoreResult:
+    """
+    生成処理・凍結処理は必ずこの関数を通す。article__reference_listを
+    他の場所から直接読まない（CAUTIONを一箇所でだけ記録するため）。
+    """
+    result = _resolve_reference_list_for_restore_current(payload)
+    for reason in result.caution_reasons:
+        _log_caution(reason)
+    return result
+
+
+def _can_generate_with_reference_list(effective: RestoreResult) -> bool:
+    return effective.source != "unknown"
+
+
+def _reference_list_generation_blocked_message() -> str:
+    return _REFERENCE_LIST_GENERATION_BLOCKED_MESSAGE
+
+
+def _freeze_reference_list_for_proof(effective: RestoreResult) -> Dict[str, Any]:
+    """
+    呼び出されるのは effective.source != "unknown" が確定した後だけ
+    （unknownはこの関数の手前で生成停止するため、"unknown時のクリア分岐"は
+    現行仕様では不要）。
+    """
+    return {
+        KEYS["proof_reference_list"]: effective.items,
+        KEYS["proof_reference_list_frozen"]: True,
+        KEYS["proof_reference_source"]: effective.source,
+        KEYS["proof_reference_state"]: effective.state,
+        KEYS["proof_reference_caution"]: list(effective.caution_reasons),
+    }
 
 
 def _take_snapshot() -> Dict[str, str]:
@@ -3098,8 +3459,32 @@ def _effective_guardrail_evidence() -> tuple[str, bool]:
     return "", False
 
 
+def _has_unresolved_reference_list_restore_diagnostics() -> bool:
+    """
+    過去の凍結記録の復元時に検出された、内部向けの異常診断が残っているか。
+    診断キー自体の型が不正な場合も、内部状態を正しく確認できないため、
+    安全側としてTrue（診断あり扱い）にする。SAFEへは戻さない。
+    """
+    key = KEYS["proof_reference_restore_diagnostics"]
+    if key not in st.session_state:
+        return False
+    raw = st.session_state.get(key)
+    if not isinstance(raw, list):
+        return True
+    valid_entries = [x for x in raw if isinstance(x, str) and x.strip()]
+    if len(valid_entries) != len(raw):
+        return True
+    return len(valid_entries) > 0
+
+
 def _render_guardrail_meter(*, body_text: str, evidence_text: str) -> str:
     res = evaluate_guardrails(body_text=body_text, evidence_text=evidence_text, root_mode=True)
+
+    has_diagnostics = _has_unresolved_reference_list_restore_diagnostics()
+    if has_diagnostics:
+        effective_level = max_level_from_list([res.level, "CAUTION"])
+        if effective_level != res.level:
+            res = dataclasses.replace(res, level=effective_level)
 
     st.markdown("### 公開前の確認")
     badge = {"SAFE": "✅ SAFE", "CAUTION": "⚠️ CAUTION", "RISK": "🛑 RISK"}[res.level]
@@ -3111,6 +3496,9 @@ def _render_guardrail_meter(*, body_text: str, evidence_text: str) -> str:
         st.warning("公開前に見直したい点があります。今のうちに確認すると安心です。")
     else:
         st.success("大きな問題は見つかっていません。公開前の最終確認がしやすい状態です。")
+
+    if has_diagnostics:
+        st.warning("この記事の確認資料の保存状態を正しく確認できていません。内容を見直してから公開してください。")
 
     _render_buyer_diagnosis_blocks(res)
 
@@ -3395,7 +3783,7 @@ def _render_pre_generate_input_summary() -> None:
     st.caption(f"トンマナ・レギュレーション：{'入力あり' if tone_reg else '未入力（標準設定を使用）'}")
 
 
-def _render_generation_summary(*, use_real_api: bool) -> None:
+def _render_generation_summary(*, use_real_api: bool, suppress_success: bool = False) -> None:
     proof_ev = str(st.session_state.get(KEYS["proof_evidence"], "") or "")
     proof_ev_compact = str(st.session_state.get(KEYS["proof_evidence_compact"], "") or "")
     used_sources = []
@@ -3409,10 +3797,13 @@ def _render_generation_summary(*, use_real_api: bool) -> None:
         if not ln.startswith("URL:") and not ln.startswith("資料名:"):
             used_points.append(ln)
 
-    if use_real_api:
-        st.success("✅ 下書きができました")
-    else:
-        st.success("✅ サンプルを表示しました。本番AIはまだ使っていません。")
+    # 今回の試行がお金・契約系の根拠不足で保存拒否された場合は、旧記事の
+    # 内容自体は表示するが、今回の生成が成功したと誤解される成功表示は出さない。
+    if not suppress_success:
+        if use_real_api:
+            st.success("✅ 下書きができました")
+        else:
+            st.success("✅ サンプルを表示しました。本番AIはまだ使っていません。")
 
     if used_sources:
         st.markdown("### 📚 今回使った確認先")
@@ -3768,6 +4159,20 @@ def _render_page_5_draft(
                 st.error(message)
             return
 
+        # reference_list（構造化確認資料）の状態がunknown（型不正・sanitize後
+        # 全滅・移行フラグ矛盾など、安全に確定できない状態）の場合は、API呼び
+        # 出しより前に生成を止める。last_text/proof_*(直前の成功生成に対応
+        # する証拠)は一切書き換えない。今回の異常理由は一時状態としてだけ
+        # 記録し、生成証拠（proof_reference_caution）とは混同しない。
+        reference_list_effective = _get_effective_reference_list_for_generation(st.session_state)
+        if not _can_generate_with_reference_list(reference_list_effective):
+            st.session_state[KEYS["reference_list_block_notice"]] = list(
+                reference_list_effective.caution_reasons
+            )
+            st.error(_reference_list_generation_blocked_message())
+            return
+        st.session_state[KEYS["reference_list_block_notice"]] = []
+
         try:
             # 新しい生成試行を始めるたびに、前回分のブロック通知をいったん
             # クリアする。APIエラーで失敗した場合もこの直後にクリア済みの
@@ -3818,8 +4223,21 @@ def _render_page_5_draft(
 
                 st.session_state[KEYS["plan_result"]] = plan_text
                 st.session_state[KEYS["last_text"]] = text
-                st.session_state[KEYS["proof_evidence"]] = str(_get_effective_input_evidence_text())
-                st.session_state[KEYS["proof_evidence_compact"]] = str(_get_generation_evidence_text())
+
+                # proof_evidence/proof_evidence_compact/proof_reference_listは、
+                # 生成に実際に使った資料（reference_list_effective.items）から
+                # 同じ内容を書く。独立した読み出し関数を別々に使うと、生成に
+                # 使った資料と証拠として残る資料が食い違う恐れがあるため。
+                proof_reference_text = _render_reference_list_items_as_text(reference_list_effective.items)
+                if _should_skip_reference_list_compaction(reference_list_effective.items):
+                    proof_reference_compact_text = proof_reference_text
+                else:
+                    proof_reference_compact_text = _compact_reference_list_text(proof_reference_text)
+                st.session_state[KEYS["proof_evidence"]] = proof_reference_text
+                st.session_state[KEYS["proof_evidence_compact"]] = proof_reference_compact_text
+                for ref_key, ref_value in _freeze_reference_list_for_proof(reference_list_effective).items():
+                    st.session_state[ref_key] = ref_value
+
                 st.session_state[KEYS["proof_suggest"]] = str(st.session_state.get(KEYS["suggest"], ""))
                 st.session_state[KEYS["proof_memo"]] = str(st.session_state.get(KEYS["memo"], ""))
                 # last_text/plan_resultはarticle__form_dataにも保存する（正本化）。
@@ -3839,6 +4257,14 @@ def _render_page_5_draft(
                     st.warning("公開前に見直したい点があります。確認先と照合すると安心です。")
                     for warning_text in warns:
                         st.write(f"- {warning_text}")
+
+                # 今回の新規生成に必要な保存・同期処理がすべて完了した、この
+                # 成功分岐の最後で初めて、古い凍結記録に対する内部復元診断を
+                # 消去する（古い凍結記録はこの一連の書き込みで丸ごと置き換わった
+                # ため）。blocked_terms判定で保存を拒否した場合や、API呼び出しが
+                # 例外で失敗した場合は、この行へ到達しないため診断は保持される。
+                if KEYS["proof_reference_restore_diagnostics"] in st.session_state:
+                    del st.session_state[KEYS["proof_reference_restore_diagnostics"]]
 
         except OpenAIRuntimeError as e:
             st.session_state["api__status_code"] = str(getattr(e, "error_code", "") or "unknown_error")
@@ -3898,7 +4324,10 @@ def _render_page_5_draft(
     if _is_blank(last_text):
         st.info("※まだ下書きは作られていません。上の『下書きを作る』を押してください。")
     else:
-        _render_generation_summary(use_real_api=use_real_api)
+        _render_generation_summary(
+            use_real_api=use_real_api,
+            suppress_success=bool(blocked_terms_display),
+        )
 
         with st.expander("AIが最初に作った文章を見る", expanded=False):
             st.caption("見比べたいときだけ開いてください。")
